@@ -3,6 +3,15 @@ import { supabase, isSupabaseConfigured } from "./supabaseClient.js";
 
 const AuthContext = createContext(null);
 
+// OAuth redirects back to the site root, so remember a deep link (e.g. /contest/<id>) across it.
+function stashReturnPath() {
+  try {
+    if (window.location.pathname !== "/") sessionStorage.setItem("sparx_return_to", window.location.pathname);
+  } catch {
+    // best-effort only
+  }
+}
+
 // Fills in profiles.country_code once, from the visitor's network (Vercel's
 // edge geo header via /api/geo). Silent no-op where that endpoint doesn't
 // exist (local dev) or the column isn't there yet.
@@ -87,12 +96,14 @@ export function AuthProvider({ children }) {
       return supabase.auth.signInWithPassword({ email, password });
     },
     async signInWithGoogle() {
+      stashReturnPath();
       return supabase.auth.signInWithOAuth({
         provider: "google",
         options: { redirectTo: window.location.origin },
       });
     },
     async signInWithGitHub() {
+      stashReturnPath();
       return supabase.auth.signInWithOAuth({
         provider: "github",
         options: { redirectTo: window.location.origin },

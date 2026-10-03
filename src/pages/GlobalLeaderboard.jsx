@@ -20,11 +20,7 @@ function Avatar({ name, size = 36 }) {
   );
 }
 
-const MEDALS = {
-  1: { background: "#fef3c7", color: "#92400e", ring: "#fbbf24" },
-  2: { background: "#f1f5f9", color: "#475569", ring: "#cbd5e1" },
-  3: { background: "#fed7aa", color: "#9a3412", ring: "#fb923c" },
-};
+const TOP_COLORS = { 1: "#b45309", 2: "#64748b", 3: "#c2410c" };
 
 function Stat({ label, value }) {
   return (
@@ -127,7 +123,6 @@ export default function GlobalLeaderboard() {
             ) : (
               <div className="divide-y" style={{ borderColor: "var(--border)" }}>
                 {pageRows.map((r) => {
-                  const medal = MEDALS[r.rank];
                   const isMe = r.userId === user?.id;
                   return (
                     <div
@@ -139,16 +134,7 @@ export default function GlobalLeaderboard() {
                       }}
                     >
                       <div className="w-10 flex justify-center flex-shrink-0">
-                        {medal ? (
-                          <div
-                            className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs"
-                            style={{ background: medal.background, color: medal.color, border: `2px solid ${medal.ring}` }}
-                          >
-                            {r.rank}
-                          </div>
-                        ) : (
-                          <span className="font-mono font-semibold text-sm" style={{ color: "var(--text-muted)" }}>{r.rank}</span>
-                        )}
+                        <span className="font-mono font-bold text-sm" style={{ color: TOP_COLORS[r.rank] || "var(--text-muted)" }}>{r.rank}</span>
                       </div>
                       <div className="flex-1 min-w-0 flex items-center gap-3">
                         <Avatar name={r.name || r.username} />

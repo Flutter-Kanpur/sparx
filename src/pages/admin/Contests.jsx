@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { Trophy, X, Loader2, Users2 } from "lucide-react";
 import { fetchAllProblems } from "../../lib/db.js";
 import { useAuth } from "../../lib/auth.jsx";
-import { createContest, fetchContests, deleteContest, contestStatus, fetchContestRsvps, setRsvpRevoked, fetchRsvpCount, updateContestRsvpSettings } from "../../lib/contestsApi.js";
+import { createContest, fetchContests, deleteContest, contestStatus, fetchContestRsvps, setRsvpRevoked, fetchRsvpCount, updateContestRsvpSettings, contestUrl } from "../../lib/contestsApi.js";
 
 function toInputValue(date) {
   // datetime-local wants "YYYY-MM-DDTHH:MM" in local time, no timezone.
@@ -238,6 +238,13 @@ export default function Contests() {
                       <Users2 size={12} /> RSVPs
                     </button>
                   )}
+                  <button
+                    onClick={() => navigator.clipboard?.writeText(contestUrl(c.id))}
+                    className="btn-ghost text-xs !px-2 !py-1"
+                    title="Copy shareable contest link"
+                  >
+                    Copy link
+                  </button>
                   <button onClick={() => setEditingId(editingId === c.id ? null : c.id)} className="btn-ghost text-xs !px-2 !py-1">
                     RSVP settings
                   </button>

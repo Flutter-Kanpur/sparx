@@ -14,6 +14,7 @@ import InterviewCandidate from "./pages/interview/InterviewCandidate.jsx";
 import InterviewInterviewer from "./pages/interview/InterviewInterviewer.jsx";
 import ContestsList from "./pages/contests/ContestsList.jsx";
 import ContestWorkspace from "./pages/contests/ContestWorkspace.jsx";
+import { fetchContestSummary } from "./lib/contestsApi.js";
 import ContestLeaderboard from "./pages/contests/ContestLeaderboard.jsx";
 import GlobalLeaderboard from "./pages/GlobalLeaderboard.jsx";
 import SheetDetail from "./pages/sheets/SheetDetail.jsx";
@@ -55,6 +56,34 @@ function AuthGate() {
   return <MainApp />;
 }
 
+function ContestLink({ id, onBack, onOpenLeaderboard }) {
+  const [contest, setContest] = useState(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    fetchContestSummary(id).then(setContest).catch(() => setFailed(true));
+  }, [id]);
+
+  if (failed) {
+    return (
+      <div className="min-h-screen flex items-center justify-center px-4" style={{ background: "var(--bg-app)" }}>
+        <div className="text-center">
+          <div className="text-base font-semibold mb-3" style={{ color: "var(--text-primary)" }}>Contest not found</div>
+          <button className="btn-secondary" onClick={onBack}>Back to contests</button>
+        </div>
+      </div>
+    );
+  }
+  if (!contest) {
+    return (
+      <div className="min-h-screen flex items-center justify-center" style={{ background: "var(--bg-app)" }}>
+        <Loader2 size={24} className="animate-spin" style={{ color: "var(--accent)" }} />
+      </div>
+    );
+  }
+  return <ContestWorkspace contest={contest} onBack={onBack} onOpenLeaderboard={() => onOpenLeaderboard(contest)} />;
+}
+
 function MainApp() {
   const { user, profile, isAdmin, signOut } = useAuth();
   const uiUser = {
@@ -68,11 +97,26 @@ function MainApp() {
   };
 
   // view: { name: 'list' | 'problem' | 'profile' | 'admin', ... }
-  const [view, setView] = useState({ name: "list" });
+  // Shareable links: /contest/<id> opens that contest after login. An OAuth
+  // sign-in lands back on "/", so the path is stashed in sessionStorage first.
+  const initialView = useMemo(() => {
+    try {
+      const saved = sessionStorage.getItem("sparx_return_to");
+      if (saved) {
+        sessionStorage.removeItem("sparx_return_to");
+        window.history.replaceState(null, "", saved);
+      }
+    } catch {
+      // sessionStorage unavailable — fall back to the current URL
+    }
+    const m = window.location.pathname.match(/^\/contest\/([0-9a-f-]{36})\/?$/i);
+    return m ? { name: "contestLink", id: m[1] } : { name: "list" };
+  }, []);
+  const [view, setView] = useState(initialView);
   // Browser history mirrors in-app navigation so the back/forward buttons move
   // between screens instead of leaving the site. Views can hold non-cloneable
   // data, so history entries store only an index into this in-memory stack.
-  const viewStack = useRef([{ name: "list" }]);
+  const viewStack = useRef([initialView]);
   const viewIdx = useRef(0);
   const [solved, setSolved] = useState(new Set());
   const [menuOpen, setMenuOpen] = useState(false);
@@ -152,7 +196,7 @@ function MainApp() {
   }
 
   useEffect(() => {
-    window.history.replaceState({ sparxIdx: 0 }, "");
+    window.history.replaceState({ sparxIdx: 0 }, "", window.location.pathname);
     function onPop(e) {
       const idx = e.state?.sparxIdx;
       if (idx == null) return;
@@ -169,7 +213,7 @@ function MainApp() {
     const idx = viewIdx.current + 1;
     viewStack.current = [...viewStack.current.slice(0, idx), next];
     viewIdx.current = idx;
-    window.history.pushState({ sparxIdx: idx }, "");
+    window.history.pushState({ sparxIdx: idx }, "", next.name === "contest" ? `/contest/${next.contest.id}` : "/");
     setView(next);
     setMenuOpen(false);
   }
@@ -186,7 +230,7 @@ function MainApp() {
   // The contest workspace has its own sticky header (back button, live
   // countdown, standings link) — stacking the normal Topbar above it would
   // just duplicate chrome, same reasoning that hides it for the admin panel.
-  const hideChrome = isAdminView || view.name === "contest";
+  const hideChrome = isAdminView || view.name === "contest" || view.name === "contestLink";
 
   async function handleSignOut() {
     await signOut();
@@ -261,6 +305,13 @@ function MainApp() {
         )}
         {view.name === "contests" && (
           <ContestsList onOpen={(c) => go({ name: "contest", contest: c })} />
+        )}
+        {view.name === "contestLink" && (
+          <ContestLink
+            id={view.id}
+            onBack={() => go({ name: "contests" })}
+            onOpenLeaderboard={(contest) => go({ name: "contestLeaderboard", contest })}
+          />
         )}
         {view.name === "contest" && (
           <ContestWorkspace

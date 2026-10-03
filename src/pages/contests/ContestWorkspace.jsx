@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
-import { Play, Send, Loader2, Trophy, ArrowLeft, Lock, Check, CalendarPlus } from "lucide-react";
+import { Play, Send, Loader2, Trophy, ArrowLeft, Lock, Check, CalendarPlus, Link2 } from "lucide-react";
 import { useAuth } from "../../lib/auth.jsx";
-import { fetchContest, submitContestSolution, fetchMyContestSubmissions, contestStatus, hasContestAccess, rsvpContest, fetchRsvpCount } from "../../lib/contestsApi.js";
+import { fetchContest, submitContestSolution, fetchMyContestSubmissions, contestStatus, contestUrl, hasContestAccess, rsvpContest, fetchRsvpCount } from "../../lib/contestsApi.js";
 import { useCountdown } from "../../hooks/useCountdown.js";
 import { googleCalendarUrl, downloadIcs } from "../../lib/calendar.js";
 import {
@@ -279,6 +279,20 @@ function ContestHeader({ contest, status, onBack, onOpenLeaderboard }) {
   );
 }
 
+function CopyLinkButton({ contest }) {
+  const [copied, setCopied] = useState(false);
+  function copy() {
+    navigator.clipboard?.writeText(contestUrl(contest.id));
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }
+  return (
+    <button onClick={copy} className="btn-ghost w-full justify-center text-xs mb-1">
+      <Link2 size={13} /> {copied ? "Link copied" : "Copy contest link"}
+    </button>
+  );
+}
+
 function UpcomingScreen({ contest, onBack }) {
   const { formatted, isPast } = useCountdown(contest.startsAt);
   return (
@@ -301,6 +315,7 @@ function UpcomingScreen({ contest, onBack }) {
             <CalendarPlus size={14} /> Apple / Outlook
           </button>
         </div>
+        <CopyLinkButton contest={contest} />
         <button className="btn-secondary w-full justify-center" onClick={onBack}>Back to contests</button>
       </div>
     </div>
@@ -369,7 +384,8 @@ function RsvpGate({ contest, onUnlocked, onBack }) {
           <div className="text-xs mt-3" style={{ color: "var(--text-muted)" }}>{going} going</div>
         )}
         {error && <div className="text-xs mt-3" style={{ color: "#b91c1c" }}>{error}</div>}
-        <button type="button" className="btn-ghost mt-3" onClick={onBack}>Back</button>
+        <div className="mt-3"><CopyLinkButton contest={contest} /></div>
+        <button type="button" className="btn-ghost" onClick={onBack}>Back</button>
       </div>
     </div>
   );

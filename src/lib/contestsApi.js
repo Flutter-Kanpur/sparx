@@ -65,6 +65,16 @@ export async function fetchContests() {
   return (data || []).map(mapContestRow);
 }
 
+export function contestUrl(contestId) {
+  return `${window.location.origin}/contest/${contestId}`;
+}
+
+export async function fetchContestSummary(contestId) {
+  const { data, error } = await supabase.from("contests").select("*").eq("id", contestId).single();
+  if (error) throw error;
+  return mapContestRow(data);
+}
+
 export async function fetchContest(contestId) {
   const [{ data: contestRow, error: contestError }, { data: linkRows, error: linkError }] = await Promise.all([
     supabase.from("contests").select("*").eq("id", contestId).single(),
