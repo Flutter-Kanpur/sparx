@@ -77,7 +77,7 @@ export default function ContestLeaderboard({ contest, onBack }) {
     message: `I solved ${solvedCount}/${me.cells.length} problems in ${contest.title} — join the next contest at ${shareUrl.replace(/^https?:\/\//, "").split("/")[0]}`,
   };
   const caption = me
-    ? `I ranked #${me.rank} of ${rows.length} in ${contest.title} on Sparx by Flutter Kanpur — solved ${solvedCount}/${me.cells.length} problems${me.finishSeconds != null ? ` with a finish time of ${formatTime(me.finishSeconds)}` : ""}. Join the next contest: ${shareUrl} #FlutterKanpur #CodingContest #Sparx`
+    ? `I ranked #${me.rank} of ${rows.length} in ${contest.title} on Sparx by Flutter Kanpur — solved ${solvedCount}/${me.cells.length} problems${me.finishSeconds != null ? ` with a finish time of ${formatTime(me.finishSeconds)}` : ""}. Join the next contest: ${shareUrl} #FlutterKanpur #WeAreFlutterKanpur #WeAreBornDifferent #CodingContest #Sparx`
     : "";
   const totalPages = rows ? Math.max(1, Math.ceil(rows.length / PAGE_SIZE)) : 1;
   const pageRows = rows ? rows.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE) : [];
