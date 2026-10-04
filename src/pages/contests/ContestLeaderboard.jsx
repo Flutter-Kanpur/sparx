@@ -61,20 +61,23 @@ export default function ContestLeaderboard({ contest, onBack }) {
 
   const me = rows?.find((r) => r.userId === user.id);
   const shareUrl = contestUrl(contest.id);
+  const solvedCount = me ? me.cells.filter((c) => c.solved).length : 0;
   const shareData = me && {
     title: contest.title,
     name: me.name || me.username || "Participant",
+    handle: me.username ? `@${me.username}` : shareUrl.replace(/^https?:\/\//, "").split("/")[0],
+    countryCode: me.countryCode,
     rank: me.rank,
     participants: rows.length,
     score: me.score,
-    solved: me.cells.filter((c) => c.solved).length,
+    solved: solvedCount,
     total: me.cells.length,
-    totalSeconds: me.finishSeconds,
-    cells: me.cells.map((c) => ({ label: `Q${c.position + 1}`, solved: c.solved, seconds: c.solveSeconds })),
-    url: shareUrl,
+    finishSeconds: me.finishSeconds,
+    cells: me.cells.map((c) => ({ solved: c.solved, seconds: c.solveSeconds })),
+    message: `I solved ${solvedCount}/${me.cells.length} problems in ${contest.title} — join the next contest at ${shareUrl.replace(/^https?:\/\//, "").split("/")[0]}`,
   };
   const caption = me
-    ? `I ranked #${me.rank} of ${rows.length} in ${contest.title} on Sparx by Flutter Kanpur — solved ${shareData.solved}/${shareData.total} problems${me.finishSeconds != null ? ` with a finish time of ${formatTime(me.finishSeconds)}` : ""}. Join the next contest: ${shareUrl} #FlutterKanpur #CodingContest #Sparx`
+    ? `I ranked #${me.rank} of ${rows.length} in ${contest.title} on Sparx by Flutter Kanpur — solved ${solvedCount}/${me.cells.length} problems${me.finishSeconds != null ? ` with a finish time of ${formatTime(me.finishSeconds)}` : ""}. Join the next contest: ${shareUrl} #FlutterKanpur #CodingContest #Sparx`
     : "";
   const totalPages = rows ? Math.max(1, Math.ceil(rows.length / PAGE_SIZE)) : 1;
   const pageRows = rows ? rows.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE) : [];

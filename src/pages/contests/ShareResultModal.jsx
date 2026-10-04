@@ -7,8 +7,9 @@ export default function ShareResultModal({ data, caption, shareUrl, onClose }) {
   const [copied, setCopied] = useState(false);
   const canNativeShare = typeof navigator !== "undefined" && !!navigator.share;
 
+  const [ready, setReady] = useState(false);
   useEffect(() => {
-    if (canvasRef.current) drawResultCard(canvasRef.current, data);
+    if (canvasRef.current) drawResultCard(canvasRef.current, data).then(() => setReady(true)).catch(() => {});
   }, [data]);
 
   function toBlob() {
@@ -53,7 +54,7 @@ export default function ShareResultModal({ data, caption, shareUrl, onClose }) {
           <div className="text-base font-bold" style={{ color: "var(--text-primary)" }}>Share your result</div>
           <button className="btn-ghost !px-2 !py-1" onClick={onClose}><X size={16} /></button>
         </div>
-        <canvas ref={canvasRef} className="w-full rounded-xl" style={{ aspectRatio: "1200 / 627", border: "1px solid var(--border)" }} />
+        <canvas ref={canvasRef} className="w-full rounded-xl" style={{ aspectRatio: "1672 / 941", border: "1px solid var(--border)", opacity: ready ? 1 : 0.4 }} />
         <div className="text-xs mt-3 mb-3 p-3 rounded-lg" style={{ background: "#fafafa", color: "var(--text-secondary)", border: "1px solid var(--border)" }}>
           {caption}
         </div>
