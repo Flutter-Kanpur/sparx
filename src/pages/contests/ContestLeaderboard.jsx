@@ -35,7 +35,7 @@ function Cell({ cell }) {
   );
 }
 
-export default function ContestLeaderboard({ contest, onBack }) {
+export default function ContestLeaderboard({ contest, onBack, backLabel = "Back to contest", banner = null }) {
   const { user } = useAuth();
   const [rows, setRows] = useState(null);
   const [page, setPage] = useState(0);
@@ -117,7 +117,7 @@ export default function ContestLeaderboard({ contest, onBack }) {
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-8">
-      <button onClick={onBack} className="btn-ghost mb-4"><ArrowLeft size={14} /> Back to contest</button>
+      <button onClick={onBack} className="btn-ghost mb-4"><ArrowLeft size={14} /> {backLabel}</button>
 
       <div className="flex items-center gap-2 mb-1">
         <Trophy size={20} style={{ color: "var(--accent)" }} />
@@ -133,6 +133,12 @@ export default function ContestLeaderboard({ contest, onBack }) {
         {status === "live" ? `Standings update live · locks in ${formatted}` : status === "ended" ? "Final standings" : "Not started yet"}
         {" · "}Finish time = last accepted solve + 5 min per wrong attempt.
       </p>
+
+      {banner && (
+        <div className="rounded-lg p-3 mb-5 text-sm" style={{ background: "var(--accent-soft)", color: "var(--text-secondary)", border: "1px solid var(--border)" }}>
+          {banner}
+        </div>
+      )}
 
       {rows === null ? (
         <div className="flex justify-center py-16"><Loader2 size={22} className="animate-spin" style={{ color: "var(--accent)" }} /></div>

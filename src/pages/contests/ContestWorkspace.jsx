@@ -3,6 +3,8 @@ import { Play, Send, Loader2, Trophy, ArrowLeft, Lock, Check, CalendarPlus, Link
 import { useAuth } from "../../lib/auth.jsx";
 import { fetchContest, submitContestSolution, fetchMyContestSubmissions, contestStatus, contestUrl, hasContestAccess, rsvpContest, fetchRsvpCount, startContestProblem, fetchMyProblemStarts, fetchMyProblemSubmissions, formatTaken } from "../../lib/contestsApi.js";
 import { useCountdown } from "../../hooks/useCountdown.js";
+import { insertSubmission, markSolved } from "../../lib/db.js";
+import ContestLeaderboard from "./ContestLeaderboard.jsx";
 import { googleCalendarUrl, downloadIcs } from "../../lib/calendar.js";
 import {
   LANG, LANG_BY_CATEGORY, starterFor, judge0RunBatch, classifyVerdict,
@@ -42,6 +44,16 @@ export default function ContestWorkspace({ contest: contestSummary, onBack, onOp
   }, [contestSummary.id, user.id, access]);
 
   if (access === null) return <CenteredMessage title="Checking access…" spinner onBack={onBack} />;
+  if (access === false && contestStatus(contestSummary) === "ended") {
+    return (
+      <ContestLeaderboard
+        contest={contestSummary}
+        onBack={onBack}
+        backLabel="Back to contests"
+        banner="This contest has ended. You didn't RSVP, so its problems weren't open to you during the contest. Here are the final standings — the same problems are available to practice in the Problems list."
+      />
+    );
+  }
   if (access === false) {
     return <RsvpGate contest={contestSummary} onUnlocked={() => setAccess(true)} onBack={onBack} />;
   }
@@ -79,7 +91,8 @@ function Workspace({ contest, solvedByProblem, setSolvedByProblem, onBack, onOpe
   const [resultsByProblem, setResultsByProblem] = useState({});
   const [activeTab, setActiveTab] = useState("problem");
 
-  const readOnly = status !== "live";
+  const live = status === "live";
+  const practice = status === "ended"; // after the end: keep coding, but nothing counts for the standings
   const [starts, setStarts] = useState({});
   const dKey = draftKey(contest.id, activeId, language);
   const code = drafts[dKey] ?? readStored(dKey) ?? (activeProblem ? starterFor(activeProblem, language) : "");
@@ -91,11 +104,11 @@ function Workspace({ contest, solvedByProblem, setSolvedByProblem, onBack, onOpe
 
   // The per-question clock starts the first time a question is opened (idempotent on the server).
   useEffect(() => {
-    if (readOnly || !activeId) return;
+    if (!live || !activeId) return;
     startContestProblem(contest.id, activeId).then((ts) => {
       setStarts((prev) => (prev[activeId] != null ? prev : { ...prev, [activeId]: ts ?? Date.now() }));
     });
-  }, [activeId, readOnly, contest.id]);
+  }, [activeId, live, contest.id]);
 
   const loadHistory = useCallback((problemId) => {
     fetchMyProblemSubmissions(user.id, contest.id, problemId)
@@ -176,10 +189,18 @@ function Workspace({ contest, solvedByProblem, setSolvedByProblem, onBack, onOpe
       const allPassed = passed === activeProblem.tests.length;
       const verdict = allPassed ? "AC" : allResults[firstFailIndex]?.verdict || "WA";
 
-      submitContestSolution({
-        userId: user.id, contestId: contest.id, problemId: activeProblem.id, language, code,
-        verdict, passed, total: activeProblem.tests.length, timeMs: maxTime * 1000, memoryKb: maxMem,
-      }).then(() => {
+      const saved = practice
+        // After the contest: an ordinary practice submission, not tied to the contest or its standings.
+        ? insertSubmission({
+            userId: user.id, problemId: activeProblem.id, kind: "submit", language, code,
+            verdict, passed, total: activeProblem.tests.length, timeMs: maxTime * 1000, memoryKb: maxMem,
+          }).then(() => (allPassed ? markSolved(user.id, activeProblem.id) : null))
+        : submitContestSolution({
+            userId: user.id, contestId: contest.id, problemId: activeProblem.id, language, code,
+            verdict, passed, total: activeProblem.tests.length, timeMs: maxTime * 1000, memoryKb: maxMem,
+          });
+      saved.then(() => {
+        if (practice) return;
         setSaveError((prev) => ({ ...prev, [activeProblem.id]: false }));
         loadHistory(activeProblem.id);
         setSolvedByProblem((prev) => ({
@@ -213,10 +234,14 @@ function Workspace({ contest, solvedByProblem, setSolvedByProblem, onBack, onOpe
     <div className="min-h-screen" style={{ background: "var(--bg-app)" }}>
       <ContestHeader contest={contest} status={status} onBack={onBack} onOpenLeaderboard={onOpenLeaderboard} />
 
-      {status === "ended" && (
+      {practice && (
         <div className="max-w-[1400px] mx-auto px-4 pt-3">
-          <div className="rounded-lg p-3 flex items-center gap-2.5 text-xs" style={{ background: "#f4f4f5", color: "var(--text-secondary)" }}>
-            <Lock size={13} /> This contest has ended — view only. Check the leaderboard for final standings.
+          <div className="rounded-lg p-3 flex items-center gap-3 text-xs flex-wrap" style={{ background: "var(--accent-soft)", color: "var(--text-secondary)", border: "1px solid var(--border)" }}>
+            <Trophy size={14} style={{ color: "var(--accent)" }} />
+            <span className="flex-1 min-w-[240px]">
+              <b style={{ color: "var(--text-primary)" }}>Practice mode.</b> This contest has ended. Write, run and submit as much as you like — it won't change the final standings.
+            </span>
+            <button onClick={onOpenLeaderboard} className="btn-secondary !px-2.5 !py-1 text-xs">View final standings</button>
           </div>
         </div>
       )}
@@ -243,7 +268,7 @@ function Workspace({ contest, solvedByProblem, setSolvedByProblem, onBack, onOpe
                 {info?.solved ? (
                   <span className="font-mono font-medium opacity-90">· {formatTaken(takenSec)}</span>
                 ) : (
-                  starts[p.id] != null && !readOnly && <QuestionTimer startedAt={starts[p.id]} />
+                  starts[p.id] != null && live && <QuestionTimer startedAt={starts[p.id]} />
                 )}
               </button>
             );
@@ -274,7 +299,7 @@ function Workspace({ contest, solvedByProblem, setSolvedByProblem, onBack, onOpe
               {activeTab === "problem" ? (
                 <ProblemDescription problem={activeProblem} />
               ) : activeTab === "history" ? (
-                <SubmissionHistory rows={history[activeId]} canRestore={!readOnly} onRestore={restoreSubmission} />
+                <SubmissionHistory rows={history[activeId]} canRestore onRestore={restoreSubmission} />
               ) : (
                 <>
                   {saveError[activeId] && (
@@ -293,7 +318,6 @@ function Workspace({ contest, solvedByProblem, setSolvedByProblem, onBack, onOpe
               <select
                 value={language}
                 onChange={(e) => setLanguage(e.target.value)}
-                disabled={readOnly}
                 className="text-xs font-medium px-2.5 py-1 rounded-md cursor-pointer focus:outline-none"
                 style={{ background: "#1e293b", color: "#e2e8f0", border: "1px solid #334155" }}
               >
@@ -306,7 +330,7 @@ function Workspace({ contest, solvedByProblem, setSolvedByProblem, onBack, onOpe
               <div className="flex items-center gap-1.5">
                 <button
                   onClick={handleRun}
-                  disabled={readOnly || running || submitting}
+                  disabled={running || submitting}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-colors disabled:opacity-40"
                   style={{ background: "#1e293b", color: "#e2e8f0", border: "1px solid #334155" }}
                 >
@@ -315,7 +339,7 @@ function Workspace({ contest, solvedByProblem, setSolvedByProblem, onBack, onOpe
                 </button>
                 <button
                   onClick={handleSubmit}
-                  disabled={readOnly || running || submitting}
+                  disabled={running || submitting}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold text-white transition-colors disabled:opacity-40"
                   style={{ background: "#059669" }}
                 >
@@ -324,7 +348,7 @@ function Workspace({ contest, solvedByProblem, setSolvedByProblem, onBack, onOpe
                 </button>
               </div>
             </div>
-            <CodeArea code={code} setCode={setCode} readOnly={readOnly} />
+            <CodeArea code={code} setCode={setCode} />
           </div>
         </div>
       </div>
