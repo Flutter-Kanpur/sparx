@@ -705,6 +705,188 @@ app.post("/api/interviews/submissions/:submissionId/check-similarity", requireAd
   }
 });
 
+// ---------------------------------------------------------------------------
+// AI contest review — "what went wrong for me in this contest".
+//
+// POST /api/contests/:contestId/review  (signed-in user; body {userId} is admin-only)
+// Reads the user's own in-window contest submissions (code, verdicts, timing),
+// asks Gemini for specific, kind feedback, and caches the result so each
+// person costs one model call. Participants get the review; "originality"
+// signals (big rewrites between attempts, near-copies of other participants'
+// code) go to a separate admin-only table and are NEVER sent to the user —
+// AI-authorship guesses are unreliable, so they're hints for a human, not a verdict.
+// Only available once the contest has ended, so it can't be used to get hints mid-contest.
+// ---------------------------------------------------------------------------
+
+async function getCaller(req) {
+  const authHeader = req.headers.authorization || "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+  if (!token || !process.env.SUPABASE_URL || !SUPABASE_ANON_KEY) return null;
+  try {
+    const client = createClient(process.env.SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
+    const { data: userData, error } = await client.auth.getUser(token);
+    if (error || !userData?.user) return null;
+    const { data: isAdmin } = await client.rpc("is_admin");
+    return { id: userData.user.id, isAdmin: !!isAdmin };
+  } catch {
+    return null;
+  }
+}
+
+const trunc = (text, n) => (text && text.length > n ? text.slice(0, n) + "\n…(truncated)" : text || "");
+
+function reviewPrompt(contest, problems) {
+  const blocks = problems.map((p) => {
+    const attempts = p.attempts.map((a) =>
+      `Attempt ${a.n} — ${a.verdict}${a.total != null ? ` (${a.passed ?? "?"}/${a.total} tests)` : ""}, ${a.minutesIn} min into the contest, ${a.language}\n\`\`\`\n${a.code}\n\`\`\``
+    ).join("\n\n");
+    return `### Problem ${p.position}: ${p.title} (${p.difficulty}) — outcome: ${p.outcome}\nStatement:\n${p.statement}\n\nThe participant's submissions, oldest first:\n${attempts || "(no submissions)"}`;
+  }).join("\n\n---\n\n");
+  return `You are a kind, precise coding coach reviewing one participant's performance in a programming contest called "${contest.title}". Verdict codes: AC accepted, WA wrong answer, TLE time limit exceeded, RE runtime error, CE compile error.
+
+For each problem, look at their attempts and say concretely what went wrong: the actual logic mistake (e.g. off-by-one, missed edge case such as empty/single-element/negative input, wrong greedy assumption, integer overflow, O(n^2) where O(n log n) was needed, mishandled input format, forgot to reset state). Reference what you see in their code. Do not paste a full corrected solution — give the key idea or a tiny snippet. If they solved it first try, note what they did well. If a problem has no submissions, say so briefly and suggest how to start.
+
+Be encouraging and specific; avoid generic advice. Never accuse the participant of cheating or of using AI.
+
+Reply with ONLY a JSON object (no markdown fences) of this shape:
+{"summary": "<2-3 sentence overview>",
+ "strengths": ["..."],
+ "problems": [{"position": <number>, "title": "...", "outcome": "solved|unsolved", "mistakes": [{"kind": "logic|edge-case|performance|input-output|syntax|approach|other", "what": "<what went wrong, specific>", "fix": "<how to fix or avoid it>"}], "takeaway": "<one line>"}],
+ "practice": ["<3-5 specific topics or problem types to practise>"],
+ "admin_note": "<one sentence for the organisers ONLY: does the final accepted code look like the participant's own progression of attempts, or like a sudden different (possibly pasted or externally generated) solution? Say 'nothing unusual' if fine.>"}
+
+${blocks}`;
+}
+
+let reviewQueue = Promise.resolve();
+const reviewsInFlight = new Map();
+
+async function buildContestReview(contestId, userId) {
+  const { data: contest } = await supabase.from("contests").select("id, title, starts_at, ends_at").eq("id", contestId).maybeSingle();
+  if (!contest) return { status: 404, error: "contest not found" };
+  if (new Date(contest.ends_at).getTime() > Date.now()) return { status: 403, error: "reviews open after the contest ends" };
+
+  const { data: cps } = await supabase
+    .from("contest_problems")
+    .select("position, problem_id, problems(id, title, difficulty, statement)")
+    .eq("contest_id", contestId)
+    .order("position", { ascending: true });
+  const { data: subs } = await supabase
+    .from("submissions")
+    .select("problem_id, language, code, verdict, passed, total, created_at")
+    .eq("contest_id", contestId)
+    .eq("user_id", userId)
+    .eq("kind", "submit")
+    .gte("created_at", contest.starts_at)
+    .lte("created_at", contest.ends_at)
+    .order("created_at", { ascending: true });
+  if (!subs || subs.length === 0) return { status: 404, error: "no submissions from this user in this contest" };
+
+  const startMs = new Date(contest.starts_at).getTime();
+  const signals = [];
+  const problems = (cps || []).filter((cp) => cp.problems).map((cp) => {
+    const mine = subs.filter((x) => x.problem_id === cp.problem_id);
+    const firstAc = mine.findIndex((x) => x.verdict === "AC");
+    const solved = firstAc !== -1;
+    // keep the prompt small: first 3 + last 2 attempts when there are many
+    const kept = mine.length > 5 ? [...mine.slice(0, 3), ...mine.slice(-2)] : mine;
+    const attempts = kept.map((a) => ({
+      n: mine.indexOf(a) + 1,
+      verdict: a.verdict, passed: a.passed, total: a.total, language: a.language,
+      minutesIn: Math.max(0, Math.round((new Date(a.created_at).getTime() - startMs) / 60000)),
+      code: trunc(a.code, 4500),
+    }));
+    if (mine.length) {
+      const wrongBefore = solved ? firstAc : mine.length;
+      const sig = { problemId: cp.problem_id, title: cp.problems.title, attempts: mine.length, wrongBeforeAccept: wrongBefore, solved };
+      if (solved && firstAc > 0) sig.rewriteSimilarity = Number(diceCoefficient(mine[firstAc - 1].code, mine[firstAc].code).toFixed(2));
+      signals.push(sig);
+    }
+    return {
+      position: cp.position + 1, problemId: cp.problem_id, title: cp.problems.title, difficulty: cp.problems.difficulty,
+      statement: trunc(cp.problems.statement, 1800), outcome: solved ? "solved" : "unsolved", attempts,
+      finalCode: (mine[solved ? firstAc : mine.length - 1] || {}).code || "",
+    };
+  });
+
+  // near-copies of other participants' final code (admin-only signal)
+  for (const p of problems) {
+    const sig = signals.find((x) => x.problemId === p.problemId);
+    if (!sig || !p.finalCode) continue;
+    const { data: others } = await supabase
+      .from("submissions").select("code, user_id")
+      .eq("contest_id", contestId).eq("problem_id", p.problemId).eq("kind", "submit").eq("verdict", "AC")
+      .neq("user_id", userId).limit(200);
+    let best = 0;
+    for (const o of others || []) best = Math.max(best, diceCoefficient(p.finalCode, o.code));
+    sig.maxSimilarityToOthers = Number(best.toFixed(2));
+  }
+
+  const response = await generateContentWithRetry({ model: "gemini-3.8-flash", contents: reviewPrompt(contest, problems) });
+  const cleaned = (response.text || "").trim().replace(/^```(json)?/i, "").replace(/```$/, "").trim();
+  const parsed = JSON.parse(cleaned);
+  const list = (v, n) => (Array.isArray(v) ? v.filter((x) => typeof x === "string").slice(0, n) : []);
+  const review = {
+    summary: typeof parsed.summary === "string" ? parsed.summary.slice(0, 800) : "",
+    strengths: list(parsed.strengths, 5),
+    problems: (Array.isArray(parsed.problems) ? parsed.problems : []).slice(0, 12).map((p) => ({
+      position: Number(p.position) || null,
+      title: String(p.title || "").slice(0, 200),
+      outcome: p.outcome === "solved" ? "solved" : "unsolved",
+      mistakes: (Array.isArray(p.mistakes) ? p.mistakes : []).slice(0, 5).map((m) => ({
+        kind: String(m.kind || "other").slice(0, 30), what: String(m.what || "").slice(0, 600), fix: String(m.fix || "").slice(0, 600),
+      })),
+      takeaway: String(p.takeaway || "").slice(0, 300),
+    })),
+    practice: list(parsed.practice, 6),
+    originalityHints: [],
+  };
+  // gentle, non-accusatory hint (the strong signals stay admin-only)
+  for (const sig of signals) {
+    if (sig.solved && sig.wrongBeforeAccept >= 2 && sig.rewriteSimilarity != null && sig.rewriteSimilarity < 0.4) {
+      review.originalityHints.push(`On "${sig.title}" your accepted solution looks very different from your earlier attempts. That's great if you rethought the approach — just make sure you can explain every line, and try solving it again from scratch without looking.`);
+    }
+  }
+
+  await supabase.from("contest_reviews").upsert({ contest_id: contestId, user_id: userId, review, model: "gemini-3.8-flash" });
+  await supabase.from("contest_review_flags").upsert({
+    contest_id: contestId, user_id: userId, signals,
+    admin_note: typeof parsed.admin_note === "string" ? parsed.admin_note.slice(0, 500) : null,
+  });
+  return { status: 200, review };
+}
+
+app.post("/api/contests/:contestId/review", async (req, res) => {
+  if (!supabase) return res.status(503).json({ error: "persistence not configured" });
+  if (!gemini) return res.status(503).json({ error: "GEMINI_API_KEY not configured" });
+  const caller = await getCaller(req);
+  if (!caller) return res.status(401).json({ error: "sign in required" });
+  const { contestId } = req.params;
+  const targetId = req.body?.userId && caller.isAdmin ? req.body.userId : caller.id;
+
+  const cached = await supabase.from("contest_reviews").select("review, created_at").eq("contest_id", contestId).eq("user_id", targetId).maybeSingle();
+  if (cached.data) return res.json({ review: cached.data.review, createdAt: cached.data.created_at, cached: true });
+
+  const key = `${contestId}:${targetId}`;
+  try {
+    if (!reviewsInFlight.has(key)) {
+      // one Gemini call at a time keeps us inside the free tier's per-minute limit
+      const job = reviewQueue.then(() => buildContestReview(contestId, targetId));
+      reviewQueue = job.catch(() => {});
+      reviewsInFlight.set(key, job);
+      job.finally(() => reviewsInFlight.delete(key)).catch(() => {});
+    }
+    const result = await reviewsInFlight.get(key);
+    if (result.status !== 200) return res.status(result.status).json({ error: result.error });
+    res.json({ review: result.review, cached: false });
+  } catch (err) {
+    console.warn("[interview-relay] contest review failed", key, err);
+    res.status(502).json({ error: "couldn't generate the review right now — try again in a minute" });
+  }
+});
+
 function closeAll(ws) {
   if (ws && ws.readyState === ws.OPEN) ws.close();
 }

@@ -7,6 +7,8 @@
 import { supabase } from "./supabaseClient.js";
 import { insertSubmission, markSolved } from "./db.js";
 
+const RELAY_URL = (import.meta.env.VITE_INTERVIEW_SERVER_URL || "").replace(/\/+$/, "");
+
 function mapContestRow(row) {
   return {
     id: row.id,
@@ -281,4 +283,34 @@ export function formatTaken(seconds) {
   if (m || h) parts.push(`${m} min`);
   parts.push(`${s} sec`);
   return parts.join(" ");
+}
+
+/**
+ * AI review of a participant's contest (generated once, then cached). Anyone signed in gets their own;
+ * admins can pass { userId } to generate/open someone else's. Throws Error with a readable message.
+ */
+export async function requestContestReview(contestId, { userId } = {}) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const res = await fetch(`${RELAY_URL}/api/contests/${contestId}/review`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(session ? { Authorization: `Bearer ${session.access_token}` } : {}) },
+    body: JSON.stringify(userId ? { userId } : {}),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || `request failed (${res.status})`);
+  return body.review;
+}
+
+/** Admin only: { [userId]: { signals, adminNote } } and { [userId]: true } for generated reviews. */
+export async function fetchContestReviewAdminData(contestId) {
+  const [flags, reviews] = await Promise.all([
+    supabase.from("contest_review_flags").select("user_id, signals, admin_note").eq("contest_id", contestId),
+    supabase.from("contest_reviews").select("user_id").eq("contest_id", contestId),
+  ]);
+  if (flags.error) throw flags.error;
+  if (reviews.error) throw reviews.error;
+  return {
+    flags: Object.fromEntries((flags.data || []).map((r) => [r.user_id, { signals: r.signals || [], adminNote: r.admin_note }])),
+    generated: Object.fromEntries((reviews.data || []).map((r) => [r.user_id, true])),
+  };
 }

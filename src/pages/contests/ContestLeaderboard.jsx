@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { Trophy, Loader2, ArrowLeft, Bug, ChevronLeft, ChevronRight, Share2 } from "lucide-react";
+import { Trophy, Loader2, ArrowLeft, Bug, ChevronLeft, ChevronRight, Share2, Sparkles } from "lucide-react";
 import { useAuth } from "../../lib/auth.jsx";
 import { fetchContestStandings, contestStatus, contestUrl } from "../../lib/contestsApi.js";
 import { StatusPill } from "../admin/Contests.jsx";
 import { useCountdown } from "../../hooks/useCountdown.js";
 import { Flag } from "../../lib/country.jsx";
 import ShareResultModal from "./ShareResultModal.jsx";
+import ContestReviewModal from "./ContestReviewModal.jsx";
 
 const PAGE_SIZE = 25;
 
@@ -40,6 +41,7 @@ export default function ContestLeaderboard({ contest, onBack, backLabel = "Back 
   const [rows, setRows] = useState(null);
   const [page, setPage] = useState(0);
   const [sharing, setSharing] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
   const status = contestStatus(contest);
   const { formatted } = useCountdown(contest.endsAt);
 
@@ -124,9 +126,16 @@ export default function ContestLeaderboard({ contest, onBack, backLabel = "Back 
         <h1 className="text-xl font-bold" style={{ color: "var(--text-primary)" }}>{contest.title}</h1>
         <StatusPill status={status} />
         {me && (
-          <button className="btn-secondary !px-3 !py-1.5 text-xs ml-auto" onClick={() => setSharing(true)}>
-            <Share2 size={13} /> Share my result
-          </button>
+          <div className="ml-auto flex items-center gap-2">
+            {status === "ended" && (
+              <button className="btn-primary !px-3 !py-1.5 text-xs" onClick={() => setReviewing(true)}>
+                <Sparkles size={13} /> My AI review
+              </button>
+            )}
+            <button className="btn-secondary !px-3 !py-1.5 text-xs" onClick={() => setSharing(true)}>
+              <Share2 size={13} /> Share my result
+            </button>
+          </div>
         )}
       </div>
       <p className="text-sm mb-6" style={{ color: "var(--text-secondary)" }}>
@@ -190,6 +199,7 @@ export default function ContestLeaderboard({ contest, onBack, backLabel = "Back 
           )}
         </>
       )}
+      {reviewing && <ContestReviewModal contest={contest} onClose={() => setReviewing(false)} />}
       {sharing && shareData && <ShareResultModal data={shareData} caption={caption} shareUrl={shareUrl} onClose={() => setSharing(false)} />}
     </div>
   );

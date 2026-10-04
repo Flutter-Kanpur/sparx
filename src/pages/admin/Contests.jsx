@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { Trophy, X, Loader2, Users2 } from "lucide-react";
+import { Trophy, X, Loader2, Users2, Sparkles } from "lucide-react";
+import ContestReviewModal from "../contests/ContestReviewModal.jsx";
 import { fetchAllProblems } from "../../lib/db.js";
 import { useAuth } from "../../lib/auth.jsx";
-import { createContest, fetchContests, deleteContest, contestStatus, fetchContestRsvps, setRsvpRevoked, fetchRsvpCount, updateContestRsvpSettings, contestUrl } from "../../lib/contestsApi.js";
+import { createContest, fetchContests, deleteContest, contestStatus, fetchContestRsvps, setRsvpRevoked, fetchRsvpCount, updateContestRsvpSettings, contestUrl, fetchContestStandings, fetchContestReviewAdminData, requestContestReview } from "../../lib/contestsApi.js";
 
 function toInputValue(date) {
   // datetime-local wants "YYYY-MM-DDTHH:MM" in local time, no timezone.
@@ -27,6 +28,7 @@ export default function Contests() {
   const [counts, setCounts] = useState({});
   const [openRsvps, setOpenRsvps] = useState(null);
   const [editingId, setEditingId] = useState(null);
+  const [reviewsFor, setReviewsFor] = useState(null);
 
   const [contests, setContests] = useState([]);
   const [listLoading, setListLoading] = useState(true);
@@ -245,6 +247,11 @@ export default function Contests() {
                   >
                     Copy link
                   </button>
+                  {contestStatus(c) === "ended" && (
+                    <button onClick={() => setReviewsFor(reviewsFor === c.id ? null : c.id)} className="btn-ghost text-xs !px-2 !py-1">
+                      <Sparkles size={12} /> AI reviews
+                    </button>
+                  )}
                   <button onClick={() => setEditingId(editingId === c.id ? null : c.id)} className="btn-ghost text-xs !px-2 !py-1">
                     RSVP settings
                   </button>
@@ -264,6 +271,7 @@ export default function Contests() {
               {editingId === c.id && (
                 <RsvpSettings contest={c} onSaved={() => { setEditingId(null); refresh(); }} />
               )}
+              {reviewsFor === c.id && <ReviewsPanel contest={c} />}
               {openRsvps === c.id && <RsvpPanel contestId={c.id} onChange={refresh} />}
               </div>
             ))}
@@ -374,6 +382,102 @@ function RsvpSettings({ contest, onSaved }) {
       />
       {error && <div className="text-xs mb-2" style={{ color: "#b91c1c" }}>{error}</div>}
       <button className="btn-primary text-xs" disabled={saving} onClick={save}>{saving ? "Saving…" : "Save"}</button>
+    </div>
+  );
+}
+
+function ReviewsPanel({ contest }) {
+  const [people, setPeople] = useState(null);
+  const [data, setData] = useState({ flags: {}, generated: {} });
+  const [busy, setBusy] = useState({});
+  const [errors, setErrors] = useState({});
+  const [viewing, setViewing] = useState(null);
+
+  const load = useCallback(async () => {
+    const [standings, admin] = await Promise.all([
+      fetchContestStandings(contest.id).catch(() => []),
+      fetchContestReviewAdminData(contest.id).catch(() => ({ flags: {}, generated: {} })),
+    ]);
+    setPeople(standings);
+    setData(admin);
+  }, [contest.id]);
+  useEffect(() => { load(); }, [load]);
+
+  async function generate(userId) {
+    setBusy((b) => ({ ...b, [userId]: true }));
+    setErrors((e) => ({ ...e, [userId]: null }));
+    try {
+      await requestContestReview(contest.id, { userId });
+      await load();
+    } catch (e) {
+      setErrors((er) => ({ ...er, [userId]: e.message }));
+    } finally {
+      setBusy((b) => ({ ...b, [userId]: false }));
+    }
+  }
+
+  async function generateAll() {
+    for (const p of people || []) {
+      if (!data.generated[p.userId]) await generate(p.userId);
+    }
+  }
+
+  const flagsFor = (userId) => {
+    const f = data.flags[userId];
+    if (!f) return [];
+    const out = [];
+    for (const sig of f.signals || []) {
+      if (sig.maxSimilarityToOthers >= 0.85) out.push({ level: "high", text: `${sig.title}: ${Math.round(sig.maxSimilarityToOthers * 100)}% similar to another participant's accepted code` });
+      else if (sig.maxSimilarityToOthers >= 0.7) out.push({ level: "mid", text: `${sig.title}: ${Math.round(sig.maxSimilarityToOthers * 100)}% similar to another participant's code` });
+      if (sig.solved && sig.wrongBeforeAccept >= 2 && sig.rewriteSimilarity != null && sig.rewriteSimilarity < 0.4) {
+        out.push({ level: "mid", text: `${sig.title}: accepted code is a near-total rewrite after ${sig.wrongBeforeAccept} wrong attempts` });
+      }
+    }
+    return out;
+  };
+
+  return (
+    <div className="px-3 pb-3 pt-3 border-t" style={{ borderColor: "var(--border)" }}>
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-xs" style={{ color: "var(--text-muted)" }}>
+          Participants see only their own feedback. The flags below are hints for you — similar code and rewrites are not proof of cheating.
+        </div>
+        <button className="btn-secondary text-xs !px-2.5 !py-1" onClick={generateAll} disabled={Object.values(busy).some(Boolean)}>Generate all missing</button>
+      </div>
+      {people === null ? (
+        <div className="flex justify-center py-4"><Loader2 size={16} className="animate-spin" style={{ color: "var(--accent)" }} /></div>
+      ) : people.length === 0 ? (
+        <div className="text-xs py-3 text-center" style={{ color: "var(--text-muted)" }}>No participants.</div>
+      ) : (
+        <div className="divide-y max-h-96 overflow-y-auto" style={{ borderColor: "var(--border)" }}>
+          {people.map((p) => {
+            const flags = flagsFor(p.userId);
+            const note = data.flags[p.userId]?.adminNote;
+            return (
+              <div key={p.userId} className="py-2.5 text-xs">
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium truncate" style={{ color: "var(--text-primary)" }}>{p.name || p.username} <span style={{ color: "var(--text-muted)" }}>· #{p.rank}, {p.score} pts</span></div>
+                  </div>
+                  {data.generated[p.userId] ? (
+                    <button className="btn-ghost text-xs !px-2 !py-1" onClick={() => setViewing(p)}>View review</button>
+                  ) : (
+                    <button className="btn-secondary text-xs !px-2 !py-1" disabled={busy[p.userId]} onClick={() => generate(p.userId)}>
+                      {busy[p.userId] ? "Generating…" : "Generate"}
+                    </button>
+                  )}
+                </div>
+                {errors[p.userId] && <div className="mt-1" style={{ color: "#b91c1c" }}>{errors[p.userId]}</div>}
+                {flags.map((f, i) => (
+                  <div key={i} className="mt-1" style={{ color: f.level === "high" ? "#b91c1c" : "#92400e" }}>⚑ {f.text}</div>
+                ))}
+                {note && <div className="mt-1" style={{ color: "var(--text-muted)" }}>AI note: {note}</div>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {viewing && <ContestReviewModal contest={contest} userId={viewing.userId} personName={viewing.name || viewing.username} onClose={() => setViewing(null)} />}
     </div>
   );
 }
