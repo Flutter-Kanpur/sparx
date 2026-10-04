@@ -247,7 +247,7 @@ function Workspace({ contest, solvedByProblem, setSolvedByProblem, onBack, onOpe
       )}
 
       {problems.length >= 1 && (
-        <div className="flex gap-1.5 px-4 pt-3 flex-wrap">
+        <div className="max-w-[1400px] mx-auto px-4 pt-3 flex gap-1.5 flex-wrap">
           {problems.map((p, i) => {
             const info = solvedByProblem[p.id];
             const startMs = starts[p.id] ?? new Date(contest.startsAt).getTime();
@@ -419,9 +419,10 @@ function ContestHeader({ contest, status, onBack, onOpenLeaderboard }) {
   const { formatted, isPast } = useCountdown(contest.endsAt);
   return (
     <header
-      className="sticky top-0 z-40 px-4 h-12 flex items-center justify-between"
+      className="sticky top-0 z-40 h-12"
       style={{ background: "rgba(255,255,255,0.9)", backdropFilter: "blur(8px)", borderBottom: "1px solid var(--border)" }}
     >
+     <div className="max-w-[1400px] mx-auto px-4 h-full flex items-center justify-between">
       <div className="flex items-center gap-3 min-w-0">
         <button onClick={onBack} className="btn-secondary !px-2.5 !py-1 text-xs flex-shrink-0" title="Leave this page — the contest timer keeps running">
           <ArrowLeft size={13} /> Exit contest
@@ -438,6 +439,7 @@ function ContestHeader({ contest, status, onBack, onOpenLeaderboard }) {
           <Trophy size={12} /> Standings
         </button>
       </div>
+     </div>
     </header>
   );
 }

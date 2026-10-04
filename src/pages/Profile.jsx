@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   MapPin, Calendar, Code2, Mail, Flame, Trophy, TrendingUp, Check, X,
   Clock, AlertCircle, ChevronRight, Loader2,
@@ -31,11 +31,11 @@ export default function Profile({ user, userId, onOpenProblem, problems }) {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    fetchUserStats(userId, problems)
+    fetchUserStats(userId)
       .then((d) => { if (!cancelled) setData(d); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [userId, problems]);
+  }, [userId]);
 
   if (loading || !data) {
     return (
@@ -128,9 +128,9 @@ export default function Profile({ user, userId, onOpenProblem, problems }) {
       <StreakBadges maxStreak={stats.maxStreak} />
 
       {/* Difficulty breakdown */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6 items-stretch">
         <div className="lg:col-span-1">
-          <div className="card p-5">
+          <div className="card p-5 h-full">
             <div className="text-sm font-semibold mb-4" style={{ color: "var(--text-primary)" }}>By difficulty</div>
             <DifficultyBar label="Easy" solved={stats.solved.starter + stats.solved.easy} total={stats.solvedTotals.starter + stats.solvedTotals.easy} color="#10b981" />
             <DifficultyBar label="Medium" solved={stats.solved.medium} total={stats.solvedTotals.medium} color="#f59e0b" />
@@ -140,7 +140,7 @@ export default function Profile({ user, userId, onOpenProblem, problems }) {
 
         {/* Heatmap */}
         <div className="lg:col-span-2">
-          <div className="card p-5">
+          <div className="card p-5 h-full">
             <div className="flex items-center justify-between mb-4">
               <div className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>Submission activity</div>
               <div className="text-xs" style={{ color: "var(--text-muted)" }}>Last 12 months</div>
@@ -305,27 +305,59 @@ function DifficultyBar({ label, solved, total, color }) {
   );
 }
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+// GitHub-style calendar: one column per week (Sunday on top), month labels above,
+// scrolled so the current week is the one in view.
 function Heatmap({ data }) {
-  // Group into columns of 7 (oldest first) — data.length is a multiple of 7,
-  // so every column is full and the grid never has a ragged trailing edge.
+  const scrollRef = useRef(null);
+  const first = data.length ? new Date(`${data[0].date}T00:00:00Z`).getUTCDay() : 0;
+  const cells = [...Array(first).fill(null), ...data];
+  while (cells.length % 7 !== 0) cells.push(null);
   const cols = [];
-  for (let i = 0; i < data.length; i += 7) {
-    cols.push(data.slice(i, i + 7));
-  }
+  for (let i = 0; i < cells.length; i += 7) cols.push(cells.slice(i, i + 7));
+
+  const labels = [];
+  let lastMonth = -1;
+  cols.forEach((col, ci) => {
+    const real = col.find(Boolean);
+    if (!real) return;
+    const m = new Date(`${real.date}T00:00:00Z`).getUTCMonth();
+    if (m !== lastMonth && (lastMonth !== -1 || ci < 3)) labels.push({ ci, text: MONTHS[m] });
+    lastMonth = m;
+  });
+
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollLeft = scrollRef.current.scrollWidth;
+  }, [data]);
+
   return (
-    <div className="flex gap-1 overflow-x-auto pb-1">
-      {cols.map((col, ci) => (
-        <div key={ci} className="flex flex-col gap-1 flex-shrink-0">
-          {col.map((cell, ri) => (
-            <div
-              key={ri}
-              className="w-3.5 h-3.5 rounded-sm cursor-pointer transition-transform hover:scale-125"
-              style={{ background: heatColor(cell.level) }}
-              title={`${cell.date}: ${cell.level} submissions`}
-            />
+    <div ref={scrollRef} className="overflow-x-auto pb-1">
+      <div style={{ minWidth: cols.length * 14 }}>
+        <div className="grid mb-1 text-[10px]" style={{ gridTemplateColumns: `repeat(${cols.length}, minmax(0, 1fr))`, color: "var(--text-muted)", height: 14 }}>
+          {labels.map((l) => (
+            <span key={l.ci} className="whitespace-nowrap" style={{ gridColumn: l.ci + 1 }}>{l.text}</span>
           ))}
         </div>
-      ))}
+        <div className="grid gap-[3px]" style={{ gridTemplateColumns: `repeat(${cols.length}, minmax(0, 1fr))` }}>
+          {cols.map((col, ci) => (
+            <div key={ci} className="grid gap-[3px]">
+              {col.map((cell, ri) =>
+                cell ? (
+                  <div
+                    key={ri}
+                    className="rounded-sm cursor-pointer transition-transform hover:scale-125"
+                    style={{ background: heatColor(cell.level), aspectRatio: "1 / 1" }}
+                    title={`${cell.count || 0} submission${cell.count === 1 ? "" : "s"} on ${cell.date}`}
+                  />
+                ) : (
+                  <div key={ri} style={{ aspectRatio: "1 / 1" }} />
+                )
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -353,3 +385,4 @@ function VerdictBadge({ verdict }) {
     </div>
   );
 }
+

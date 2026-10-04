@@ -256,9 +256,10 @@ function computeStreaks(dayStrings) {
   return { current, max };
 }
 
-export async function fetchUserStats(userId, allProblems) {
+export async function fetchUserStats(userId) {
+  const DIFFICULTIES = ["starter", "easy", "medium", "hard"];
   const [
-    totalSubmitRes, acRes, solvedRes, recentRes, activityRes, rankRes,
+    totalSubmitRes, acRes, solvedRes, recentRes, activityRes, rankRes, ...difficultyCountRes
   ] = await Promise.all([
     supabase.from("submissions").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("kind", "submit"),
     supabase.from("submissions").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("kind", "submit").eq("verdict", "AC"),
@@ -269,6 +270,9 @@ export async function fetchUserStats(userId, allProblems) {
       .order("created_at", { ascending: false }).limit(8),
     supabase.from("submissions").select("created_at").eq("user_id", userId).eq("kind", "submit").gte("created_at", isoDaysAgo(370)),
     supabase.rpc("my_rank"),
+    // Catalog size per difficulty, counted in the database (the old code counted
+    // whatever page of problems happened to be loaded in the browser).
+    ...DIFFICULTIES.map((d) => supabase.from("problems").select("id", { count: "exact", head: true }).eq("difficulty", d)),
   ]);
 
   if (totalSubmitRes.error) throw totalSubmitRes.error;
@@ -285,9 +289,7 @@ export async function fetchUserStats(userId, allProblems) {
   const totalSolved = (solvedRes.data || []).length;
 
   const totalByDifficulty = { starter: 0, easy: 0, medium: 0, hard: 0 };
-  for (const p of allProblems || []) {
-    if (p.difficulty in totalByDifficulty) totalByDifficulty[p.difficulty]++;
-  }
+  DIFFICULTIES.forEach((d, i) => { totalByDifficulty[d] = difficultyCountRes[i]?.count || 0; });
 
   const totalSubmissions = totalSubmitRes.count || 0;
   const acCount = acRes.count || 0;
@@ -321,7 +323,7 @@ export async function fetchUserStats(userId, allProblems) {
     if (count >= 2) level = 2;
     if (count >= 4) level = 3;
     if (count >= 6) level = 4;
-    heatmap.push({ date: k, level });
+    heatmap.push({ date: k, level, count });
   }
 
   return {
