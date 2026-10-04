@@ -209,6 +209,7 @@ export async function fetchContestStandings(contestId) {
       points: row.points,
       solved: row.solved,
       solveSeconds: row.solve_seconds,
+      elapsedSeconds: row.elapsed_seconds ?? row.solve_seconds,
       wrongCount: row.wrong_count,
     });
   }
@@ -227,9 +228,57 @@ export async function fetchMyContestSubmissions(userId, contestId) {
 
   const byProblem = {};
   for (const row of data || []) {
-    const entry = (byProblem[row.problem_id] ||= { attempts: 0, solved: false });
+    const entry = (byProblem[row.problem_id] ||= { attempts: 0, solved: false, firstAcAt: null });
     entry.attempts++;
-    if (row.verdict === "AC") entry.solved = true;
+    if (row.verdict === "AC") {
+      entry.solved = true;
+      entry.firstAcAt ||= row.created_at;
+    }
   }
   return byProblem;
+}
+
+/** The signed-in user's submit history for one contest question, newest first (includes the submitted code). */
+export async function fetchMyProblemSubmissions(userId, contestId, problemId) {
+  const { data, error } = await supabase
+    .from("submissions")
+    .select("id, language, code, verdict, passed, total, time_ms, memory_kb, created_at")
+    .eq("user_id", userId)
+    .eq("contest_id", contestId)
+    .eq("problem_id", problemId)
+    .eq("kind", "submit")
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+
+/** Starts this user's clock for a question (idempotent). Resolves to the start time in ms, or null. */
+export async function startContestProblem(contestId, problemId) {
+  const { data, error } = await supabase.rpc("start_contest_problem", { p_contest_id: contestId, p_problem_id: problemId });
+  if (error || !data) return null;
+  return new Date(data).getTime();
+}
+
+/** { [problemId]: startedAtMs } for the signed-in user. */
+export async function fetchMyProblemStarts(userId, contestId) {
+  const { data, error } = await supabase
+    .from("contest_problem_starts")
+    .select("problem_id, started_at")
+    .eq("user_id", userId)
+    .eq("contest_id", contestId);
+  if (error) throw error;
+  return Object.fromEntries((data || []).map((r) => [r.problem_id, new Date(r.started_at).getTime()]));
+}
+
+/** 604 -> "10 min 4 sec", 45 -> "45 sec", 3725 -> "1 hr 2 min 5 sec". */
+export function formatTaken(seconds) {
+  if (seconds == null) return "";
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  const parts = [];
+  if (h) parts.push(`${h} hr`);
+  if (m || h) parts.push(`${m} min`);
+  parts.push(`${s} sec`);
+  return parts.join(" ");
 }

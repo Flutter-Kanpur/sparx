@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { Trophy, Loader2, ArrowLeft, Bug, ChevronLeft, ChevronRight } from "lucide-react";
+import { Trophy, Loader2, ArrowLeft, Bug, ChevronLeft, ChevronRight, Share2 } from "lucide-react";
 import { useAuth } from "../../lib/auth.jsx";
-import { fetchContestStandings, contestStatus } from "../../lib/contestsApi.js";
+import { fetchContestStandings, contestStatus, contestUrl } from "../../lib/contestsApi.js";
 import { StatusPill } from "../admin/Contests.jsx";
 import { useCountdown } from "../../hooks/useCountdown.js";
 import { Flag } from "../../lib/country.jsx";
+import ShareResultModal from "./ShareResultModal.jsx";
 
 const PAGE_SIZE = 25;
 
@@ -38,6 +39,7 @@ export default function ContestLeaderboard({ contest, onBack }) {
   const { user } = useAuth();
   const [rows, setRows] = useState(null);
   const [page, setPage] = useState(0);
+  const [sharing, setSharing] = useState(false);
   const status = contestStatus(contest);
   const { formatted } = useCountdown(contest.endsAt);
 
@@ -58,6 +60,22 @@ export default function ContestLeaderboard({ contest, onBack }) {
   }, [rows]);
 
   const me = rows?.find((r) => r.userId === user.id);
+  const shareUrl = contestUrl(contest.id);
+  const shareData = me && {
+    title: contest.title,
+    name: me.name || me.username || "Participant",
+    rank: me.rank,
+    participants: rows.length,
+    score: me.score,
+    solved: me.cells.filter((c) => c.solved).length,
+    total: me.cells.length,
+    totalSeconds: me.finishSeconds,
+    cells: me.cells.map((c) => ({ label: `Q${c.position + 1}`, solved: c.solved, seconds: c.solveSeconds })),
+    url: shareUrl,
+  };
+  const caption = me
+    ? `I ranked #${me.rank} of ${rows.length} in ${contest.title} on Sparx by Flutter Kanpur — solved ${shareData.solved}/${shareData.total} problems${me.finishSeconds != null ? ` with a finish time of ${formatTime(me.finishSeconds)}` : ""}. Join the next contest: ${shareUrl} #FlutterKanpur #CodingContest #Sparx`
+    : "";
   const totalPages = rows ? Math.max(1, Math.ceil(rows.length / PAGE_SIZE)) : 1;
   const pageRows = rows ? rows.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE) : [];
 
@@ -102,6 +120,11 @@ export default function ContestLeaderboard({ contest, onBack }) {
         <Trophy size={20} style={{ color: "var(--accent)" }} />
         <h1 className="text-xl font-bold" style={{ color: "var(--text-primary)" }}>{contest.title}</h1>
         <StatusPill status={status} />
+        {me && (
+          <button className="btn-secondary !px-3 !py-1.5 text-xs ml-auto" onClick={() => setSharing(true)}>
+            <Share2 size={13} /> Share my result
+          </button>
+        )}
       </div>
       <p className="text-sm mb-6" style={{ color: "var(--text-secondary)" }}>
         {status === "live" ? `Standings update live · locks in ${formatted}` : status === "ended" ? "Final standings" : "Not started yet"}
@@ -130,7 +153,7 @@ export default function ContestLeaderboard({ contest, onBack }) {
                 </tr>
               </thead>
               <tbody>
-                {me && renderRow(me, { pinned: true })}
+                {me && !pageRows.some((r) => r.userId === me.userId) && renderRow(me, { pinned: true })}
                 {pageRows.map((r) => renderRow(r))}
               </tbody>
             </table>
@@ -158,6 +181,7 @@ export default function ContestLeaderboard({ contest, onBack }) {
           )}
         </>
       )}
+      {sharing && shareData && <ShareResultModal data={shareData} caption={caption} shareUrl={shareUrl} onClose={() => setSharing(false)} />}
     </div>
   );
 }

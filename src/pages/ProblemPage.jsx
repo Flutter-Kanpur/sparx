@@ -66,10 +66,33 @@ export const LANG_BY_CATEGORY = Object.entries(LANG).reduce((acc, [key, val]) =>
   return acc;
 }, {});
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Retries rate limits / gateway errors with a short backoff, and reports the
+// real HTTP status instead of letting it look like a timeout.
+async function judge0Fetch(url, options, attempts = 4) {
+  let last = "network error";
+  for (let a = 0; a < attempts; a++) {
+    try {
+      const res = await fetch(url, options);
+      if (res.ok) return res;
+      last = res.status;
+      if (![429, 502, 503, 504].includes(res.status)) break;
+    } catch (e) {
+      last = e.message;
+    }
+    await sleep(800 * (a + 1));
+  }
+  throw new Error(last === 429 ? "judge0 is rate-limiting requests (429) — wait a moment and try again" : `judge0 request failed (${last})`);
+}
+
+const JSON_HEADERS = { "Content-Type": "application/json" };
+const J0_FIELDS = "token,status,stdout,stderr,compile_output,time,memory";
+
 export async function judge0Run({ sourceCode, languageId, stdin, expectedOutput, cpuTimeLimit = 2 }) {
-  const createRes = await fetch(`${JUDGE0_URL}/submissions?base64_encoded=false&wait=false`, {
+  const createRes = await judge0Fetch(`${JUDGE0_URL}/submissions?base64_encoded=false&wait=false`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: JSON_HEADERS,
     body: JSON.stringify({
       source_code: sourceCode,
       language_id: languageId,
@@ -78,16 +101,60 @@ export async function judge0Run({ sourceCode, languageId, stdin, expectedOutput,
       cpu_time_limit: cpuTimeLimit,
     }),
   });
-  if (!createRes.ok) throw new Error(`judge0 create failed: ${createRes.status}`);
   const { token } = await createRes.json();
   for (let i = 0; i < 25; i++) {
-    await new Promise((r) => setTimeout(r, 600 + i * 80));
-    const r = await fetch(`${JUDGE0_URL}/submissions/${token}?base64_encoded=false`);
-    if (!r.ok) continue;
+    await sleep(600 + i * 80);
+    const r = await judge0Fetch(`${JUDGE0_URL}/submissions/${token}?base64_encoded=false`);
     const result = await r.json();
     if (result.status?.id > 2) return result;
   }
   throw new Error("timeout — judge0 took too long");
+}
+
+/**
+ * Runs one program against many inputs with Judge0's batch endpoints: one
+ * request to create every job and one poll for all of them, instead of a
+ * create + poll loop per test. Results come back in the same order as `cases`
+ * ({ stdin, expectedOutput }[]). Public Judge0 caps a batch at 20, so larger
+ * sets are sent in chunks.
+ */
+export async function judge0RunBatch({ sourceCode, languageId, cases, cpuTimeLimit = 2 }) {
+  const out = new Array(cases.length);
+  for (let start = 0; start < cases.length; start += 20) {
+    const chunk = cases.slice(start, start + 20);
+    const createRes = await judge0Fetch(`${JUDGE0_URL}/submissions/batch?base64_encoded=false`, {
+      method: "POST",
+      headers: JSON_HEADERS,
+      body: JSON.stringify({
+        submissions: chunk.map((c) => ({
+          source_code: sourceCode,
+          language_id: languageId,
+          stdin: c.stdin || "",
+          expected_output: c.expectedOutput || null,
+          cpu_time_limit: cpuTimeLimit,
+        })),
+      }),
+    });
+    const created = await createRes.json();
+    if (!Array.isArray(created) || created.some((c) => !c.token)) {
+      throw new Error("judge0 rejected the submission batch");
+    }
+    const tokens = created.map((c) => c.token).join(",");
+
+    let results = null;
+    let delay = 700;
+    const deadline = Date.now() + 90000;
+    while (Date.now() < deadline) {
+      await sleep(delay);
+      delay = Math.min(delay + 300, 2500);
+      const res = await judge0Fetch(`${JUDGE0_URL}/submissions/batch?tokens=${tokens}&base64_encoded=false&fields=${J0_FIELDS}`);
+      const { submissions } = await res.json();
+      if (submissions.every((x) => x.status?.id > 2)) { results = submissions; break; }
+    }
+    if (!results) throw new Error("timeout — judge0 took too long");
+    results.forEach((r, i) => { out[start + i] = r; });
+  }
+  return out;
 }
 
 export function classifyVerdict(j0Status, expected, stdout) {
@@ -125,13 +192,13 @@ export default function ProblemPage({ problem, onBack, onSolved }) {
     setRunning(true); setResults(null); setActiveTab("results"); setCustomOutput(null);
     try {
       const sampleResults = [];
+      const batch = await judge0RunBatch({
+        sourceCode: code, languageId: LANG[language].id,
+        cases: problem.examples.map((ex) => ({ stdin: ex.input === "(none)" ? "" : ex.input, expectedOutput: ex.output })),
+      });
       for (let i = 0; i < problem.examples.length; i++) {
         const ex = problem.examples[i];
-        const stdin = ex.input === "(none)" ? "" : ex.input;
-        const r = await judge0Run({
-          sourceCode: code, languageId: LANG[language].id,
-          stdin, expectedOutput: ex.output,
-        });
+        const r = batch[i];
         const verdict = classifyVerdict(r.status, ex.output, r.stdout);
         sampleResults.push({
           index: i + 1, input: ex.input, expected: ex.output,
@@ -153,12 +220,13 @@ export default function ProblemPage({ problem, onBack, onSolved }) {
     try {
       const allResults = [];
       let passed = 0, firstFailIndex = null, maxTime = 0, maxMem = 0;
+      const batch = await judge0RunBatch({
+        sourceCode: code, languageId: LANG[language].id,
+        cases: problem.tests.map((t) => ({ stdin: t.input, expectedOutput: t.expected })),
+      });
       for (let i = 0; i < problem.tests.length; i++) {
         const t = problem.tests[i];
-        const r = await judge0Run({
-          sourceCode: code, languageId: LANG[language].id,
-          stdin: t.input, expectedOutput: t.expected,
-        });
+        const r = batch[i];
         const verdict = classifyVerdict(r.status, t.expected, r.stdout);
         const time = parseFloat(r.time || "0");
         const mem = r.memory || 0;

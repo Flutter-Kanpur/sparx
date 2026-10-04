@@ -1,13 +1,27 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Play, Send, Loader2, Trophy, ArrowLeft, Lock, Check, CalendarPlus, Link2 } from "lucide-react";
 import { useAuth } from "../../lib/auth.jsx";
-import { fetchContest, submitContestSolution, fetchMyContestSubmissions, contestStatus, contestUrl, hasContestAccess, rsvpContest, fetchRsvpCount } from "../../lib/contestsApi.js";
+import { fetchContest, submitContestSolution, fetchMyContestSubmissions, contestStatus, contestUrl, hasContestAccess, rsvpContest, fetchRsvpCount, startContestProblem, fetchMyProblemStarts, fetchMyProblemSubmissions, formatTaken } from "../../lib/contestsApi.js";
 import { useCountdown } from "../../hooks/useCountdown.js";
 import { googleCalendarUrl, downloadIcs } from "../../lib/calendar.js";
 import {
-  LANG, LANG_BY_CATEGORY, starterFor, judge0Run, classifyVerdict,
+  LANG, LANG_BY_CATEGORY, starterFor, judge0RunBatch, classifyVerdict,
   ProblemDescription, CodeArea, ResultsView, Tab,
 } from "../ProblemPage.jsx";
+
+// Drafts and the chosen language live in localStorage so they survive leaving
+// the page (Standings, Exit, a refresh) — the workspace itself unmounts.
+const draftKey = (contestId, problemId, lang) => `sparx:draft:${contestId}:${problemId}:${lang}`;
+function readStored(key) {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+function writeStored(key, value) {
+  try { localStorage.setItem(key, value); } catch { /* storage full or blocked — keep working in memory */ }
+}
+function initialLanguage() {
+  const saved = readStored("sparx:language");
+  return saved && LANG[saved] ? saved : "python";
+}
 
 export default function ContestWorkspace({ contest: contestSummary, onBack, onOpenLeaderboard }) {
   const { user } = useAuth();
@@ -52,25 +66,58 @@ function Workspace({ contest, solvedByProblem, setSolvedByProblem, onBack, onOpe
   const [activeId, setActiveId] = useState(problems[0]?.id);
   const activeProblem = problems.find((p) => p.id === activeId);
 
-  const [language, setLanguage] = useState("python");
-  const [codeByProblem, setCodeByProblem] = useState({});
+  const [language, setLanguageState] = useState(initialLanguage);
+  const [drafts, setDrafts] = useState({});
+  const [history, setHistory] = useState({});
+  const [saveError, setSaveError] = useState({});
+  function setLanguage(next) {
+    setLanguageState(next);
+    writeStored("sparx:language", next);
+  }
   const [running, setRunning] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [resultsByProblem, setResultsByProblem] = useState({});
   const [activeTab, setActiveTab] = useState("problem");
 
   const readOnly = status !== "live";
-  const code = codeByProblem[activeId] ?? (activeProblem ? starterFor(activeProblem, language) : "");
+  const [starts, setStarts] = useState({});
+  const dKey = draftKey(contest.id, activeId, language);
+  const code = drafts[dKey] ?? readStored(dKey) ?? (activeProblem ? starterFor(activeProblem, language) : "");
   const results = resultsByProblem[activeId] || null;
 
   useEffect(() => {
-    if (!activeProblem || readOnly) return;
-    setCodeByProblem((prev) => ({ ...prev, [activeId]: starterFor(activeProblem, language) }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [language, activeId]);
+    fetchMyProblemStarts(user.id, contest.id).then(setStarts).catch(() => {});
+  }, [user.id, contest.id]);
+
+  // The per-question clock starts the first time a question is opened (idempotent on the server).
+  useEffect(() => {
+    if (readOnly || !activeId) return;
+    startContestProblem(contest.id, activeId).then((ts) => {
+      setStarts((prev) => (prev[activeId] != null ? prev : { ...prev, [activeId]: ts ?? Date.now() }));
+    });
+  }, [activeId, readOnly, contest.id]);
+
+  const loadHistory = useCallback((problemId) => {
+    fetchMyProblemSubmissions(user.id, contest.id, problemId)
+      .then((rows) => setHistory((prev) => ({ ...prev, [problemId]: rows })))
+      .catch(() => {});
+  }, [user.id, contest.id]);
+
+  useEffect(() => {
+    if (activeId) loadHistory(activeId);
+  }, [activeId, loadHistory]);
 
   function setCode(next) {
-    setCodeByProblem((prev) => ({ ...prev, [activeId]: next }));
+    setDrafts((prev) => ({ ...prev, [dKey]: next }));
+    writeStored(dKey, next);
+  }
+
+  function restoreSubmission(row) {
+    if (!LANG[row.language]) return;
+    const key = draftKey(contest.id, activeId, row.language);
+    setLanguage(row.language);
+    setDrafts((prev) => ({ ...prev, [key]: row.code }));
+    writeStored(key, row.code);
   }
 
   async function handleRun() {
@@ -78,12 +125,13 @@ function Workspace({ contest, solvedByProblem, setSolvedByProblem, onBack, onOpe
     setResultsByProblem((prev) => ({ ...prev, [activeId]: null }));
     try {
       const sampleResults = [];
+      const batch = await judge0RunBatch({
+        sourceCode: code, languageId: LANG[language].id,
+        cases: activeProblem.examples.map((ex) => ({ stdin: ex.input === "(none)" ? "" : ex.input, expectedOutput: ex.output })),
+      });
       for (let i = 0; i < activeProblem.examples.length; i++) {
         const ex = activeProblem.examples[i];
-        const stdin = ex.input === "(none)" ? "" : ex.input;
-        const r = await judge0Run({
-          sourceCode: code, languageId: LANG[language].id, stdin, expectedOutput: ex.output,
-        });
+        const r = batch[i];
         const verdict = classifyVerdict(r.status, ex.output, r.stdout);
         sampleResults.push({
           index: i + 1, input: ex.input, expected: ex.output,
@@ -105,11 +153,13 @@ function Workspace({ contest, solvedByProblem, setSolvedByProblem, onBack, onOpe
     try {
       const allResults = [];
       let passed = 0, firstFailIndex = null, maxTime = 0, maxMem = 0;
+      const batch = await judge0RunBatch({
+        sourceCode: code, languageId: LANG[language].id,
+        cases: activeProblem.tests.map((t) => ({ stdin: t.input, expectedOutput: t.expected })),
+      });
       for (let i = 0; i < activeProblem.tests.length; i++) {
         const t = activeProblem.tests[i];
-        const r = await judge0Run({
-          sourceCode: code, languageId: LANG[language].id, stdin: t.input, expectedOutput: t.expected,
-        });
+        const r = batch[i];
         const verdict = classifyVerdict(r.status, t.expected, r.stdout);
         const time = parseFloat(r.time || "0");
         const mem = r.memory || 0;
@@ -130,11 +180,17 @@ function Workspace({ contest, solvedByProblem, setSolvedByProblem, onBack, onOpe
         userId: user.id, contestId: contest.id, problemId: activeProblem.id, language, code,
         verdict, passed, total: activeProblem.tests.length, timeMs: maxTime * 1000, memoryKb: maxMem,
       }).then(() => {
+        setSaveError((prev) => ({ ...prev, [activeProblem.id]: false }));
+        loadHistory(activeProblem.id);
         setSolvedByProblem((prev) => ({
           ...prev,
-          [activeProblem.id]: { attempts: (prev[activeProblem.id]?.attempts || 0) + 1, solved: prev[activeProblem.id]?.solved || allPassed },
+          [activeProblem.id]: {
+            attempts: (prev[activeProblem.id]?.attempts || 0) + 1,
+            solved: prev[activeProblem.id]?.solved || allPassed,
+            firstAcAt: prev[activeProblem.id]?.firstAcAt || (allPassed ? new Date().toISOString() : null),
+          },
         }));
-      }).catch(() => {});
+      }).catch(() => setSaveError((prev) => ({ ...prev, [activeProblem.id]: true })));
 
       setResultsByProblem((prev) => ({
         ...prev,
@@ -165,10 +221,12 @@ function Workspace({ contest, solvedByProblem, setSolvedByProblem, onBack, onOpe
         </div>
       )}
 
-      {problems.length > 1 && (
-        <div className="flex gap-1.5 px-4 pt-3">
+      {problems.length >= 1 && (
+        <div className="flex gap-1.5 px-4 pt-3 flex-wrap">
           {problems.map((p, i) => {
-            const solved = solvedByProblem[p.id]?.solved;
+            const info = solvedByProblem[p.id];
+            const startMs = starts[p.id] ?? new Date(contest.startsAt).getTime();
+            const takenSec = info?.firstAcAt ? Math.max(0, Math.round((new Date(info.firstAcAt).getTime() - startMs) / 1000)) : null;
             return (
               <button
                 key={p.id}
@@ -180,8 +238,13 @@ function Workspace({ contest, solvedByProblem, setSolvedByProblem, onBack, onOpe
                   border: "1px solid " + (activeId === p.id ? "var(--accent)" : "var(--border)"),
                 }}
               >
-                {solved && <Check size={12} strokeWidth={3} />}
+                {info?.solved && <Check size={12} strokeWidth={3} />}
                 Problem {i + 1}
+                {info?.solved ? (
+                  <span className="font-mono font-medium opacity-90">· {formatTaken(takenSec)}</span>
+                ) : (
+                  starts[p.id] != null && !readOnly && <QuestionTimer startedAt={starts[p.id]} />
+                )}
               </button>
             );
           })}
@@ -200,12 +263,27 @@ function Workspace({ contest, solvedByProblem, setSolvedByProblem, onBack, onOpe
                 label="Submission"
                 badge={results?.kind === "submit" && results.verdict === "AC" ? "ac" : results?.kind === "submit" ? "fail" : null}
               />
+              <Tab
+                icon={null}
+                active={activeTab === "history"}
+                onClick={() => setActiveTab("history")}
+                label={`My submissions${history[activeId]?.length ? ` (${history[activeId].length})` : ""}`}
+              />
             </div>
             <div className="p-6 overflow-y-auto flex-1">
               {activeTab === "problem" ? (
                 <ProblemDescription problem={activeProblem} />
+              ) : activeTab === "history" ? (
+                <SubmissionHistory rows={history[activeId]} canRestore={!readOnly} onRestore={restoreSubmission} />
               ) : (
-                <ResultsView results={results} running={running || submitting} />
+                <>
+                  {saveError[activeId] && (
+                    <div className="rounded-lg p-3 mb-4 text-xs" style={{ background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca" }}>
+                      Your last submission could not be saved, so it may not appear in My submissions or the standings. Check your connection and submit again.
+                    </div>
+                  )}
+                  <ResultsView results={results} running={running || submitting} />
+                </>
               )}
             </div>
           </div>
@@ -254,6 +332,65 @@ function Workspace({ contest, solvedByProblem, setSolvedByProblem, onBack, onOpe
   );
 }
 
+function SubmissionHistory({ rows, canRestore, onRestore }) {
+  const [open, setOpen] = useState(null);
+  if (rows === undefined) {
+    return <div className="flex justify-center py-8"><Loader2 size={18} className="animate-spin" style={{ color: "var(--accent)" }} /></div>;
+  }
+  if (rows.length === 0) {
+    return <div className="text-sm text-center py-8" style={{ color: "var(--text-muted)" }}>No submissions for this question yet.</div>;
+  }
+  return (
+    <div className="space-y-2">
+      {rows.map((r) => {
+        const ac = r.verdict === "AC";
+        return (
+          <div key={r.id} className="rounded-lg" style={{ border: "1px solid var(--border)" }}>
+            <button
+              onClick={() => setOpen(open === r.id ? null : r.id)}
+              className="w-full flex items-center gap-3 px-3 py-2.5 text-left text-xs"
+            >
+              <span
+                className="px-2 py-0.5 rounded-full font-bold"
+                style={{ background: ac ? "#ecfdf5" : "#fef2f2", color: ac ? "#047857" : "#b91c1c" }}
+              >
+                {ac ? "Accepted" : r.verdict}
+              </span>
+              <span style={{ color: "var(--text-secondary)" }}>{r.passed ?? "?"}/{r.total ?? "?"} tests</span>
+              <span style={{ color: "var(--text-muted)" }}>{LANG[r.language]?.display || r.language}</span>
+              <span className="ml-auto" style={{ color: "var(--text-muted)" }}>
+                {new Date(r.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+              </span>
+            </button>
+            {open === r.id && (
+              <div className="px-3 pb-3">
+                <pre className="text-xs rounded-md p-3 overflow-auto max-h-64" style={{ background: "#0f172a", color: "#e2e8f0" }}>{r.code}</pre>
+                <div className="flex items-center justify-between mt-2 text-[11px]" style={{ color: "var(--text-muted)" }}>
+                  <span>{r.time_ms != null ? `${Math.round(r.time_ms)} ms` : ""}{r.memory_kb ? ` · ${Math.round(r.memory_kb)} KB` : ""}</span>
+                  {canRestore && LANG[r.language] && (
+                    <button className="btn-secondary !px-2.5 !py-1 text-xs" onClick={() => onRestore(r)}>Restore to editor</button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function QuestionTimer({ startedAt }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const sec = Math.max(0, Math.floor((now - startedAt) / 1000));
+  const m = Math.floor(sec / 60), r = sec % 60;
+  return <span className="font-mono font-medium opacity-90">· {String(m).padStart(2, "0")}:{String(r).padStart(2, "0")}</span>;
+}
+
 function ContestHeader({ contest, status, onBack, onOpenLeaderboard }) {
   const { formatted, isPast } = useCountdown(contest.endsAt);
   return (
@@ -262,7 +399,9 @@ function ContestHeader({ contest, status, onBack, onOpenLeaderboard }) {
       style={{ background: "rgba(255,255,255,0.9)", backdropFilter: "blur(8px)", borderBottom: "1px solid var(--border)" }}
     >
       <div className="flex items-center gap-3 min-w-0">
-        <button onClick={onBack} className="btn-ghost !px-2 !py-1 text-xs flex-shrink-0"><ArrowLeft size={13} /></button>
+        <button onClick={onBack} className="btn-secondary !px-2.5 !py-1 text-xs flex-shrink-0" title="Leave this page — the contest timer keeps running">
+          <ArrowLeft size={13} /> Exit contest
+        </button>
         <div className="flex items-center gap-2 text-sm font-semibold truncate" style={{ color: "var(--text-primary)" }}>
           <Trophy size={15} style={{ color: "var(--accent)" }} /> {contest.title}
         </div>

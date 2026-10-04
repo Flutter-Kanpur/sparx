@@ -5,7 +5,7 @@ import { getInterview, endInterview, forkInterview, dartpadEmbedUrl, buildWebUID
 import { useInterviewSocket } from "../../interview/useInterviewSocket.js";
 import { useCountdown } from "../../interview/countdown.js";
 import {
-  LANG, LANG_BY_CATEGORY, starterFor, judge0Run, classifyVerdict,
+  LANG, LANG_BY_CATEGORY, starterFor, judge0RunBatch, classifyVerdict,
   ProblemDescription, CodeArea, ResultsView, Tab,
 } from "../ProblemPage.jsx";
 
@@ -263,12 +263,13 @@ function CandidateWorkspace({ room, problemsById, candidateDetails, roomId }) {
     setResultsByProblem((prev) => ({ ...prev, [activeId]: null }));
     try {
       const sampleResults = [];
+      const batch = await judge0RunBatch({
+        sourceCode: code, languageId: LANG[language].id,
+        cases: activeProblem.examples.map((ex) => ({ stdin: ex.input === "(none)" ? "" : ex.input, expectedOutput: ex.output })),
+      });
       for (let i = 0; i < activeProblem.examples.length; i++) {
         const ex = activeProblem.examples[i];
-        const stdin = ex.input === "(none)" ? "" : ex.input;
-        const r = await judge0Run({
-          sourceCode: code, languageId: LANG[language].id, stdin, expectedOutput: ex.output,
-        });
+        const r = batch[i];
         const verdict = classifyVerdict(r.status, ex.output, r.stdout);
         sampleResults.push({
           index: i + 1, input: ex.input, expected: ex.output,
@@ -294,11 +295,13 @@ function CandidateWorkspace({ room, problemsById, candidateDetails, roomId }) {
     try {
       const allResults = [];
       let passed = 0, firstFailIndex = null, maxTime = 0, maxMem = 0;
+      const batch = await judge0RunBatch({
+        sourceCode: code, languageId: LANG[language].id,
+        cases: activeProblem.tests.map((t) => ({ stdin: t.input, expectedOutput: t.expected })),
+      });
       for (let i = 0; i < activeProblem.tests.length; i++) {
         const t = activeProblem.tests[i];
-        const r = await judge0Run({
-          sourceCode: code, languageId: LANG[language].id, stdin: t.input, expectedOutput: t.expected,
-        });
+        const r = batch[i];
         const verdict = classifyVerdict(r.status, t.expected, r.stdout);
         const time = parseFloat(r.time || "0");
         const mem = r.memory || 0;
