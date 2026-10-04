@@ -1,0 +1,72 @@
+{
+ "hello-world": {
+  "c": "#include <stdio.h>\nint main() {\n    // your code here\n    return 0;\n}",
+  "cpp": "#include <iostream>\nusing namespace std;\nint main() {\n    // your code here\n    return 0;\n}",
+  "java": "public class Main {\n    public static void main(String[] args) {\n        // your code here\n    }\n}",
+  "python": "# your code here",
+  "javascript": "// your code here"
+ },
+ "sum-two": {
+  "c": "#include <stdio.h>\nint main() {\n    int a, b;\n    scanf(\"%d %d\", &a, &b);\n    // your code here\n    return 0;\n}",
+  "cpp": "#include <iostream>\nusing namespace std;\nint main() {\n    int a, b;\n    cin >> a >> b;\n    // your code here\n    return 0;\n}",
+  "java": "import java.util.*;\npublic class Main {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        int a = sc.nextInt(), b = sc.nextInt();\n        // your code here\n    }\n}",
+  "python": "a, b = map(int, input().split())\n# your code here",
+  "javascript": "const [a, b] = require('fs').readFileSync(0, 'utf8').trim().split(' ').map(Number);\n// your code here"
+ },
+ "reverse-string": {
+  "c": "#include <stdio.h>\n#include <string.h>\nint main() {\n    char s[1005];\n    fgets(s, 1005, stdin);\n    int n = strlen(s);\n    if (s[n-1] == '\\n') s[--n] = 0;\n    // your code here\n    return 0;\n}",
+  "cpp": "#include <iostream>\nusing namespace std;\n#include <string>\nint main() {\n    string s; getline(cin, s);\n    // your code here\n    return 0;\n}",
+  "java": "import java.util.*;\npublic class Main {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        String s = sc.nextLine();\n        // your code here\n    }\n}",
+  "python": "s = input()\n# your code here",
+  "javascript": "const s = require('fs').readFileSync(0, 'utf8').trim();\n// your code here"
+ },
+ "fizzbuzz": {
+  "c": "#include <stdio.h>\nint main() {\n    int n; scanf(\"%d\", &n);\n    // your code here\n    return 0;\n}",
+  "cpp": "#include <iostream>\nusing namespace std;\nint main() {\n    int n; cin >> n;\n    // your code here\n    return 0;\n}",
+  "java": "import java.util.*;\npublic class Main {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        int n = sc.nextInt();\n        // your code here\n    }\n}",
+  "python": "n = int(input())\n# your code here",
+  "javascript": "const n = parseInt(require('fs').readFileSync(0, 'utf8').trim());\n// your code here"
+ },
+ "max-of-three": {
+  "c": "#include <stdio.h>\nint main() {\n    int a, b, c; scanf(\"%d %d %d\", &a, &b, &c);\n    // your code here\n    return 0;\n}",
+  "cpp": "#include <iostream>\nusing namespace std;\nint main() {\n    int a, b, c; cin >> a >> b >> c;\n    // your code here\n    return 0;\n}",
+  "java": "import java.util.*;\npublic class Main {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        int a = sc.nextInt(), b = sc.nextInt(), c = sc.nextInt();\n        // your code here\n    }\n}",
+  "python": "a, b, c = map(int, input().split())\n# your code here",
+  "javascript": "const [a, b, c] = require('fs').readFileSync(0, 'utf8').trim().split(' ').map(Number);\n// your code here"
+ },
+ "even-odd": {
+  "c": "#include <stdio.h>\nint main() {\n    int n;\n    scanf(\"%d\", &n);\n    // your code here\n    return 0;\n}",
+  "cpp": "#include <iostream>\nusing namespace std;\nint main() {\n    int n;\n    cin >> n;\n    // your code here\n    return 0;\n}",
+  "java": "import java.util.*;\npublic class Main {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        int n = sc.nextInt();\n        // your code here\n    }\n}",
+  "python": "n = int(input())\n# your code here",
+  "javascript": "const n = parseInt(require('fs').readFileSync(0, 'utf8').trim());\n// your code here"
+ },
+ "factorial": {
+  "c": "#include <stdio.h>\nint main() {\n    long long n;\n    scanf(\"%lld\", &n);\n    // your code here\n    return 0;\n}",
+  "cpp": "#include <iostream>\nusing namespace std;\nint main() {\n    long long n;\n    cin >> n;\n    // your code here\n    return 0;\n}",
+  "java": "import java.util.*;\npublic class Main {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        long n = sc.nextLong();\n        // your code here\n    }\n}",
+  "python": "n = int(input())\n# your code here",
+  "javascript": "const n = parseInt(require('fs').readFileSync(0, 'utf8').trim());\n// your code here"
+ },
+ "palindrome": {
+  "c": "#include <stdio.h>\n#include <string.h>\nint main() {\n    char s[1005]; fgets(s, 1005, stdin);\n    int n = strlen(s);\n    if (s[n-1] == '\\n') s[--n] = 0;\n    // your code here\n    return 0;\n}",
+  "cpp": "#include <iostream>\nusing namespace std;\n#include <string>\nint main() {\n    string s; getline(cin, s);\n    // your code here\n    return 0;\n}",
+  "java": "import java.util.*;\npublic class Main {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        String s = sc.nextLine();\n        // your code here\n    }\n}",
+  "python": "s = input()\n# your code here",
+  "javascript": "const s = require('fs').readFileSync(0, 'utf8').trim();\n// your code here"
+ },
+ "fibonacci": {
+  "c": "#include <stdio.h>\nint main() {\n    long long n; scanf(\"%lld\", &n);\n    // your code here\n    return 0;\n}",
+  "cpp": "#include <iostream>\nusing namespace std;\nint main() {\n    long long n; cin >> n;\n    // your code here\n    return 0;\n}",
+  "java": "import java.util.*;\npublic class Main {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        long n = sc.nextLong();\n        // your code here\n    }\n}",
+  "python": "n = int(input())\n# your code here",
+  "javascript": "const n = parseInt(require('fs').readFileSync(0, 'utf8').trim());\n// your code here"
+ },
+ "count-vowels": {
+  "c": "#include <stdio.h>\n#include <string.h>\nint main() {\n    char s[1005] = \"\";\n    fgets(s, 1005, stdin);\n    int n = strlen(s);\n    if (n > 0 && s[n-1] == '\\n') s[--n] = 0;\n    // your code here\n    return 0;\n}",
+  "cpp": "#include <iostream>\nusing namespace std;\n#include <string>\nint main() {\n    string s; getline(cin, s);\n    // your code here\n    return 0;\n}",
+  "java": "import java.util.*;\npublic class Main {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        String s = sc.hasNextLine() ? sc.nextLine() : \"\";\n        // your code here\n    }\n}",
+  "python": "s = input()\n# your code here",
+  "javascript": "const s = require('fs').readFileSync(0, 'utf8').replace(/\\n$/, '');\n// your code here"
+ }
+}
