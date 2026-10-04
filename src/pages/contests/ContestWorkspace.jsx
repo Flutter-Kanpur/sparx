@@ -110,6 +110,23 @@ function Workspace({ contest, solvedByProblem, setSolvedByProblem, onBack, onOpe
     });
   }, [activeId, live, contest.id]);
 
+  // Time taken on a solved question = its first Accepted submit minus when the user started it
+  // (first opened it). Without a recorded start (e.g. contests from before question starts were
+  // tracked) the question is assumed to start when the previous one was solved, so the label is
+  // the gap between solves, not the clock time since the contest began.
+  const solveTimes = Object.values(solvedByProblem).map((v) => (v.firstAcAt ? new Date(v.firstAcAt).getTime() : null)).filter(Boolean);
+  function takenSeconds(problemId) {
+    const info = solvedByProblem[problemId];
+    if (!info?.firstAcAt) return null;
+    const solvedAt = new Date(info.firstAcAt).getTime();
+    let startMs = starts[problemId];
+    if (startMs == null) {
+      const earlier = solveTimes.filter((t) => t < solvedAt);
+      startMs = earlier.length ? Math.max(...earlier) : new Date(contest.startsAt).getTime();
+    }
+    return Math.max(0, Math.round((solvedAt - startMs) / 1000));
+  }
+
   const loadHistory = useCallback((problemId) => {
     fetchMyProblemSubmissions(user.id, contest.id, problemId)
       .then((rows) => setHistory((prev) => ({ ...prev, [problemId]: rows })))
@@ -250,8 +267,7 @@ function Workspace({ contest, solvedByProblem, setSolvedByProblem, onBack, onOpe
         <div className="max-w-[1400px] mx-auto px-4 pt-3 flex gap-1.5 flex-wrap">
           {problems.map((p, i) => {
             const info = solvedByProblem[p.id];
-            const startMs = starts[p.id] ?? new Date(contest.startsAt).getTime();
-            const takenSec = info?.firstAcAt ? Math.max(0, Math.round((new Date(info.firstAcAt).getTime() - startMs) / 1000)) : null;
+            const takenSec = takenSeconds(p.id);
             return (
               <button
                 key={p.id}

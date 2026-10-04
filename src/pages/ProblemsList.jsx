@@ -1,8 +1,7 @@
 import React, { useState, useMemo, useEffect } from "react";
 import {
   Search, ChevronRight, Check, CircleDot, ChevronLeft,
-  ChevronsLeft, ChevronsRight, Loader2, Filter, X, Trophy,
-} from "lucide-react";
+  ChevronsLeft, ChevronsRight, Loader2, Filter, X, Trophy, ChevronDown } from "lucide-react";
 import { fetchContests, contestStatus } from "../lib/contestsApi.js";
 import { useCountdown } from "../hooks/useCountdown.js";
 
@@ -103,21 +102,28 @@ export default function ProblemsList({
                 <FilterPill active={difficultyFilter === "hard"} onClick={() => onDifficultyChange("hard")} label="Hard" count={counts.hard} color="red" />
               )}
               {companies.length > 0 && (
-                <select
-                  value={companyFilter}
-                  onChange={(e) => onCompanyChange(e.target.value)}
-                  className="text-xs font-semibold px-3 py-1.5 rounded-lg cursor-pointer focus:outline-none"
-                  style={{
-                    background: companyFilter === "all" ? "white" : "var(--accent)",
-                    color: companyFilter === "all" ? "var(--text-secondary)" : "white",
-                    border: `1px solid ${companyFilter === "all" ? "var(--border)" : "var(--accent)"}`,
-                  }}
-                >
-                  <option value="all">All companies</option>
-                  {companies.map((c) => (
-                    <option key={c.name} value={c.name}>{c.name} ({c.count})</option>
-                  ))}
-                </select>
+                <div className="relative">
+                  <select
+                    value={companyFilter}
+                    onChange={(e) => onCompanyChange(e.target.value)}
+                    className="text-xs font-semibold pl-3 pr-8 py-1.5 rounded-lg cursor-pointer focus:outline-none appearance-none"
+                    style={{
+                      background: companyFilter === "all" ? "white" : "var(--accent)",
+                      color: companyFilter === "all" ? "var(--text-secondary)" : "white",
+                      border: `1px solid ${companyFilter === "all" ? "var(--border)" : "var(--accent)"}`,
+                    }}
+                  >
+                    <option value="all">All companies</option>
+                    {companies.map((c) => (
+                      <option key={c.name} value={c.name}>{c.name} ({c.count})</option>
+                    ))}
+                  </select>
+                  <ChevronDown
+                    size={14}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                    style={{ color: companyFilter === "all" ? "var(--text-muted)" : "white" }}
+                  />
+                </div>
               )}
             </div>
           </div>
