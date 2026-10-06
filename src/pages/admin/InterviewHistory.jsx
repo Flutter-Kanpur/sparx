@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { User, Mail, FileText, Loader2, ChevronRight, ArrowLeft, Check, X, Clock, Sparkles, Copy, GraduationCap, Phone } from "lucide-react";
-import { fetchInterviewRoomsHistory, fetchInterviewSubmissions, fetchInterviewRoomVerdictSummary, fetchAllProblems } from "../../lib/db.js";
+import { fetchInterviewRoomsHistory, fetchArchivedInterviews, fetchInterviewSubmissions, fetchInterviewRoomVerdictSummary, fetchAllProblems } from "../../lib/db.js";
 import { checkSubmissionAI, checkSubmissionSimilarity } from "../../interview/interviewApi.js";
 import { formatRelativeTime } from "../../utils/time.js";
 
 export default function InterviewHistory() {
   const [rooms, setRooms] = useState(null);
+  const [archived, setArchived] = useState([]);
+  const [showArchived, setShowArchived] = useState(true);
   const [problems, setProblems] = useState([]);
   const [verdictSummary, setVerdictSummary] = useState(null);
   const [selectedRoomId, setSelectedRoomId] = useState(null);
@@ -20,7 +22,10 @@ export default function InterviewHistory() {
   // was ever recorded until a manual reload.
   const refresh = useCallback(() => {
     fetchInterviewRoomsHistory()
-      .then(setRooms)
+      .then((rs) => {
+        setRooms(rs);
+        fetchArchivedInterviews(new Set(rs.map((r) => r.id))).then(setArchived).catch(() => {});
+      })
       .catch((e) => setError(e.message || String(e)));
     fetchInterviewRoomVerdictSummary().then(setVerdictSummary).catch(() => {});
   }, []);
@@ -41,7 +46,8 @@ export default function InterviewHistory() {
   }, [selectedRoomId]);
 
   const problemTitle = (id) => problems.find((p) => p.id === id)?.title || id;
-  const selectedRoom = rooms?.find((r) => r.id === selectedRoomId) || null;
+  const allRooms = rooms && [...rooms, ...(showArchived ? archived : [])].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  const selectedRoom = [...(rooms || []), ...archived].find((r) => r.id === selectedRoomId) || null;
 
   async function runAiCheck(submissionId) {
     setAiState((prev) => ({ ...prev, [submissionId]: { loading: true } }));
@@ -163,6 +169,12 @@ export default function InterviewHistory() {
         Every past interview room, whether it's still live or has already ended — including ones with zero
         submissions, since "the candidate never submitted anything" is itself the answer to "did they complete it."
       </p>
+      {archived.length > 0 && (
+        <label className="flex items-center gap-2 text-xs mb-4 cursor-pointer" style={{ color: "var(--text-secondary)" }}>
+          <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
+          Show {archived.length} archived interview{archived.length === 1 ? "" : "s"} (room deleted when it ended — rebuilt from saved submissions; may include test rooms)
+        </label>
+      )}
 
       {error && (
         <div className="card p-4 mb-4 text-sm" style={{ color: "#b91c1c" }}>{error}</div>
@@ -170,12 +182,12 @@ export default function InterviewHistory() {
 
       {rooms === null ? (
         <div className="flex justify-center py-12"><Loader2 size={20} className="animate-spin" style={{ color: "var(--accent)" }} /></div>
-      ) : rooms.length === 0 ? (
+      ) : allRooms.length === 0 ? (
         <div className="card p-8 text-center text-sm" style={{ color: "var(--text-muted)" }}>No interviews yet.</div>
       ) : (
         <div className="card overflow-hidden">
           <div className="divide-y" style={{ borderColor: "var(--border)" }}>
-            {rooms.map((r) => (
+            {allRooms.map((r) => (
               <button
                 key={r.id}
                 onClick={() => setSelectedRoomId(r.id)}
@@ -189,6 +201,11 @@ export default function InterviewHistory() {
                       {r.title}
                     </div>
                     <StatusBadge status={statusForRoom(r, verdictSummary)} />
+                    {r.archived && (
+                      <span className="inline-flex items-center text-[10px] font-semibold px-1.5 py-0.5 rounded flex-shrink-0" style={{ background: "#fef3c7", color: "#92400e" }} title="Room was deleted when the interview ended; shown from its saved submissions">
+                        Archived
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-3 mt-1 text-xs flex-wrap" style={{ color: "var(--text-muted)" }}>
                     <span className="inline-flex items-center gap-1">

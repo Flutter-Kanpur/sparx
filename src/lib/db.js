@@ -168,6 +168,31 @@ export async function fetchInterviewRoomsHistory({ limit = 50 } = {}) {
   return data || [];
 }
 
+/** Interviews whose room row no longer exists (rooms were hard-deleted when ended, before ended rooms
+ * were kept) but whose submissions were saved. Rebuilt from interview_submissions, shaped like the
+ * rows of fetchInterviewRoomsHistory plus `archived: true`. `knownRoomIds` are the live/kept rooms. */
+export async function fetchArchivedInterviews(knownRoomIds) {
+  const { data, error } = await supabase
+    .from("interview_submissions")
+    .select("room_id, room_title, problem_id, candidate_name, candidate_email, candidate_college, candidate_year, candidate_branch, candidate_phone, created_at")
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  const byRoom = new Map();
+  for (const r of data || []) {
+    if (knownRoomIds.has(r.room_id)) continue;
+    let room = byRoom.get(r.room_id);
+    if (!room) {
+      room = { id: r.room_id, title: r.room_title || "Interview", problem_ids: [], created_at: r.created_at, archived: true };
+      byRoom.set(r.room_id, room);
+    }
+    if (r.problem_id && !room.problem_ids.includes(r.problem_id)) room.problem_ids.push(r.problem_id);
+    for (const k of ["candidate_name", "candidate_email", "candidate_college", "candidate_year", "candidate_branch", "candidate_phone"]) {
+      if (!room[k] && r[k]) room[k] = r[k];
+    }
+  }
+  return [...byRoom.values()].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+}
+
 /** All submit attempts for one interview room, newest first. */
 export async function fetchInterviewSubmissions(roomId) {
   const { data, error } = await supabase
