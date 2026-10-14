@@ -3,7 +3,7 @@ import { Trophy, X, Loader2, Users2, Sparkles } from "lucide-react";
 import ContestReviewModal from "../contests/ContestReviewModal.jsx";
 import { fetchAllProblems } from "../../lib/db.js";
 import { useAuth } from "../../lib/auth.jsx";
-import { createContest, fetchContests, deleteContest, contestStatus, fetchContestRsvps, setRsvpRevoked, fetchRsvpCount, updateContestRsvpSettings, contestUrl, fetchContestStandings, fetchContestReviewAdminData, requestContestReview } from "../../lib/contestsApi.js";
+import { createContest, fetchContests, deleteContest, contestStatus, fetchContestRsvps, setRsvpRevoked, fetchRsvpCount, updateContestRsvpSettings, contestUrl, fetchContestStandings, fetchContestReviewAdminData, requestContestReview, recomputeContestRatings } from "../../lib/contestsApi.js";
 
 function toInputValue(date) {
   // datetime-local wants "YYYY-MM-DDTHH:MM" in local time, no timezone.
@@ -29,6 +29,8 @@ export default function Contests() {
   const [openRsvps, setOpenRsvps] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [reviewsFor, setReviewsFor] = useState(null);
+  const [ratingMsg, setRatingMsg] = useState(null);
+  const [rating, setRating] = useState(false);
 
   const [contests, setContests] = useState([]);
   const [listLoading, setListLoading] = useState(true);
@@ -210,7 +212,30 @@ export default function Contests() {
       </div>
 
       <div className="card p-5">
-        <div className="text-sm font-semibold mb-3" style={{ color: "var(--text-primary)" }}>Contests</div>
+        <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+          <div className="text-sm font-semibold" style={{ color: "var(--text-primary)" }}>Contests</div>
+          <div className="flex items-center gap-3">
+            {ratingMsg && <span className="text-xs" style={{ color: ratingMsg.error ? "#b91c1c" : "#047857" }}>{ratingMsg.text}</span>}
+            <button
+              className="btn-secondary text-xs !px-2.5 !py-1"
+              disabled={rating}
+              title="Recalculates every finished contest's Elo ratings from the standings. Safe to run again."
+              onClick={async () => {
+                setRating(true); setRatingMsg(null);
+                try {
+                  const n = await recomputeContestRatings();
+                  setRatingMsg({ text: `Ratings updated (${n} entries).` });
+                } catch (e) {
+                  setRatingMsg({ error: true, text: e.message || "Couldn't update ratings (is migration 0022 applied?)" });
+                } finally {
+                  setRating(false);
+                }
+              }}
+            >
+              {rating ? "Updating…" : "Update ratings"}
+            </button>
+          </div>
+        </div>
         {listLoading ? (
           <div className="flex justify-center py-8"><Loader2 size={18} className="animate-spin" style={{ color: "var(--accent)" }} /></div>
         ) : contests.length === 0 ? (

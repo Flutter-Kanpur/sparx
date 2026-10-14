@@ -14,7 +14,10 @@ import InterviewCandidate from "./pages/interview/InterviewCandidate.jsx";
 import InterviewInterviewer from "./pages/interview/InterviewInterviewer.jsx";
 import ContestsList from "./pages/contests/ContestsList.jsx";
 import ContestWorkspace from "./pages/contests/ContestWorkspace.jsx";
+import DesignList from "./pages/design/DesignList.jsx";
+import DesignQuestion from "./pages/design/DesignQuestion.jsx";
 import { fetchContestSummary } from "./lib/contestsApi.js";
+import { DESIGN_QUESTIONS } from "./design/questions.js";
 import ContestLeaderboard from "./pages/contests/ContestLeaderboard.jsx";
 import GlobalLeaderboard from "./pages/GlobalLeaderboard.jsx";
 import SheetDetail from "./pages/sheets/SheetDetail.jsx";
@@ -110,7 +113,13 @@ function MainApp() {
       // sessionStorage unavailable — fall back to the current URL
     }
     const m = window.location.pathname.match(/^\/contest\/([0-9a-f-]{36})\/?$/i);
-    return m ? { name: "contestLink", id: m[1] } : { name: "list" };
+    if (m) return { name: "contestLink", id: m[1] };
+    const d = window.location.pathname.match(/^\/design(?:\/([a-z0-9-]+))?\/?$/i);
+    if (d) {
+      const q = d[1] && DESIGN_QUESTIONS.find((x) => x.id === d[1]);
+      return q ? { name: "designQuestion", question: q } : { name: "design" };
+    }
+    return { name: "list" };
   }, []);
   const [view, setView] = useState(initialView);
   // Browser history mirrors in-app navigation so the back/forward buttons move
@@ -213,7 +222,11 @@ function MainApp() {
     const idx = viewIdx.current + 1;
     viewStack.current = [...viewStack.current.slice(0, idx), next];
     viewIdx.current = idx;
-    window.history.pushState({ sparxIdx: idx }, "", next.name === "contest" ? `/contest/${next.contest.id}` : "/");
+    const path = next.name === "contest" ? `/contest/${next.contest.id}`
+      : next.name === "design" ? "/design"
+      : next.name === "designQuestion" ? `/design/${next.question.id}`
+      : "/";
+    window.history.pushState({ sparxIdx: idx }, "", path);
     setView(next);
     setMenuOpen(false);
   }
@@ -249,6 +262,7 @@ function MainApp() {
           onProfile={() => go({ name: "profile" })}
           onContests={() => go({ name: "contests" })}
           onLeaderboard={() => go({ name: "leaderboard" })}
+          onDesign={() => go({ name: "design" })}
           onAdmin={() => go({ name: "admin", subview: "dashboard" })}
           onSignOut={handleSignOut}
           currentView={view.name}
@@ -327,6 +341,8 @@ function MainApp() {
           />
         )}
         {view.name === "leaderboard" && <GlobalLeaderboard />}
+        {view.name === "design" && <DesignList onOpen={(q) => go({ name: "designQuestion", question: q })} />}
+        {view.name === "designQuestion" && <DesignQuestion question={view.question} onBack={() => go({ name: "design" })} />}
         {view.name === "admin" && !isAdmin && (
           <NotAdmin onBack={() => go({ name: "list" })} />
         )}
@@ -377,7 +393,7 @@ function NotAdmin({ onBack }) {
 // ---------------------------------------------------------------------------
 //  Topbar
 // ---------------------------------------------------------------------------
-function Topbar({ user, isAdmin, menuOpen, setMenuOpen, onHome, onProfile, onContests, onLeaderboard, onAdmin, onSignOut, currentView }) {
+function Topbar({ user, isAdmin, menuOpen, setMenuOpen, onHome, onProfile, onContests, onLeaderboard, onDesign, onAdmin, onSignOut, currentView }) {
   return (
     <header
       className="sticky top-0 z-40 backdrop-blur-md"
@@ -414,6 +430,7 @@ function Topbar({ user, isAdmin, menuOpen, setMenuOpen, onHome, onProfile, onCon
           <nav className="hidden md:flex items-center gap-1">
             <NavLink active={currentView === "list"} onClick={onHome}>Problems</NavLink>
             <NavLink active={currentView === "contests" || currentView === "contest" || currentView === "contestLeaderboard"} onClick={onContests}>Contests</NavLink>
+            <NavLink active={currentView === "design" || currentView === "designQuestion"} onClick={onDesign}>System Design</NavLink>
             <NavLink active={currentView === "leaderboard"} onClick={onLeaderboard}>Leaderboard</NavLink>
             <NavLink active={currentView === "profile"} onClick={onProfile}>Profile</NavLink>
           </nav>

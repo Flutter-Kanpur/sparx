@@ -314,3 +314,10 @@ export async function fetchContestReviewAdminData(contestId) {
     generated: Object.fromEntries((reviews.data || []).map((r) => [r.user_id, true])),
   };
 }
+
+/** Admin only: re-rate every finished contest (Elo). Returns how many rating rows exist afterwards. */
+export async function recomputeContestRatings() {
+  const { data, error } = await supabase.rpc("recompute_contest_ratings");
+  if (error) throw error;
+  return data;
+}

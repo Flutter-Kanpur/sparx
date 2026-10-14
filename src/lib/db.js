@@ -384,6 +384,11 @@ export async function fetchGlobalLeaderboard({ limit = 100 } = {}) {
     firstTryCount: row.first_try_count,
     topicCount: row.topic_count,
     score: row.score,
+    // Sparx Rating parts (migration 0022); older databases only have `score`
+    practiceScore: row.practice_score ?? row.score,
+    contestRating: row.contest_rating ?? null,
+    contestsPlayed: row.contests_played ?? 0,
+    contestLastDelta: row.contest_last_delta ?? null,
     rank: row.rank,
   }));
 }
