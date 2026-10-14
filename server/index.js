@@ -21,6 +21,7 @@ import { WebSocketServer } from "ws";
 import { nanoid } from "nanoid";
 import { createClient } from "@supabase/supabase-js";
 import { GoogleGenAI } from "@google/genai";
+import { shingleCounts, buildIdf, cosineSimilarity, jaccard, isTooShort } from "./similarity.js";
 
 // Manual .env loader — no `dotenv` dependency, and unlike Node's
 // `--env-file` flag this doesn't throw when the file is absent (so
@@ -591,29 +592,6 @@ async function fetchSubmissionRow(submissionId) {
   }
 }
 
-function normalizeCode(code) {
-  return (code || "").toLowerCase().replace(/\s+/g, " ").trim();
-}
-
-function bigrams(str) {
-  const set = new Set();
-  for (let i = 0; i < str.length - 1; i++) set.add(str.slice(i, i + 2));
-  return set;
-}
-
-/** Dice coefficient over character bigrams — cheap, dependency-free, catches
- * straightforward copy-paste between candidates. Not resilient to
- * variable-renaming-level obfuscation; accepted as "good enough" for a
- * small interview batch, not a research-grade plagiarism system. */
-function diceCoefficient(codeA, codeB) {
-  const a = bigrams(normalizeCode(codeA));
-  const b = bigrams(normalizeCode(codeB));
-  if (a.size === 0 || b.size === 0) return 0;
-  let overlap = 0;
-  for (const bg of a) if (b.has(bg)) overlap++;
-  return (2 * overlap) / (a.size + b.size);
-}
-
 function buildAiCheckPrompt(code, language) {
   return `You are helping an interviewer spot AI-generated code submissions in a live coding interview. Judge whether the following ${language} submission looks AI-generated (e.g. ChatGPT/Copilot-style: generic variable names, boilerplate comments, unusually polished/idiomatic for the apparent skill level) versus organically human-written (messier, iterative, personal style).
 
@@ -686,19 +664,26 @@ app.post("/api/interviews/submissions/:submissionId/check-similarity", requireAd
   const submission = await fetchSubmissionRow(req.params.submissionId);
   if (!submission) return res.status(404).json({ error: "submission not found" });
   try {
+    // Pool = every submission to this problem. Chunk weights (TF-IDF) come from the whole pool, so
+    // boilerplate everyone writes counts for little; see server/similarity.js.
     const { data, error } = await supabase
       .from("interview_submissions")
       .select("id, room_id, room_title, candidate_name, code, created_at")
       .eq("problem_id", submission.problem_id)
-      .neq("room_id", submission.room_id)
       .order("created_at", { ascending: false })
-      .limit(200);
+      .limit(300);
     if (error) return res.status(502).json({ error: error.message });
-    const matches = (data || [])
-      .map(({ code, ...rest }) => ({ ...rest, score: diceCoefficient(submission.code, code) }))
+    const pool = (data || []).map((row) => ({ row, counts: shingleCounts(row.code) }));
+    const targetCounts = shingleCounts(submission.code);
+    const targetTooShort = isTooShort(submission.code);
+    const idf = buildIdf([...pool.map((x) => x.counts), targetCounts]);
+    const matches = pool
+      .filter(({ row }) => row.room_id !== submission.room_id)
+      .map(({ row: { code, ...rest }, counts }) => ({ ...rest, score: cosineSimilarity(targetCounts, counts, idf), tooShort: targetTooShort || isTooShort(code) }))
       .sort((a, b) => b.score - a.score)
       .slice(0, 10);
-    res.json({ matches }); // not persisted — pool grows over time, would go stale
+    const poolSize = pool.length;
+    res.json({ matches, poolSize, method: "token-tfidf" }); // not persisted — pool grows over time, would go stale
   } catch (err) {
     console.warn("[interview-relay] check-similarity failed", submission.id, err);
     res.status(502).json({ error: "similarity check failed" });
@@ -801,7 +786,7 @@ async function buildContestReview(contestId, userId) {
     if (mine.length) {
       const wrongBefore = solved ? firstAc : mine.length;
       const sig = { problemId: cp.problem_id, title: cp.problems.title, attempts: mine.length, wrongBeforeAccept: wrongBefore, solved };
-      if (solved && firstAc > 0) sig.rewriteSimilarity = Number(diceCoefficient(mine[firstAc - 1].code, mine[firstAc].code).toFixed(2));
+      if (solved && firstAc > 0) sig.rewriteSimilarity = Number(jaccard(shingleCounts(mine[firstAc - 1].code), shingleCounts(mine[firstAc].code)).toFixed(2));
       signals.push(sig);
     }
     return {
@@ -811,17 +796,38 @@ async function buildContestReview(contestId, userId) {
     };
   });
 
-  // near-copies of other participants' final code (admin-only signal)
+  // near-copies of other participants' final code (admin-only signal): TF-IDF over everyone's accepted
+  // solutions to the problem, so common boilerplate does not inflate the score
   for (const p of problems) {
     const sig = signals.find((x) => x.problemId === p.problemId);
     if (!sig || !p.finalCode) continue;
     const { data: others } = await supabase
-      .from("submissions").select("code, user_id")
-      .eq("contest_id", contestId).eq("problem_id", p.problemId).eq("kind", "submit").eq("verdict", "AC")
-      .neq("user_id", userId).limit(200);
-    let best = 0;
-    for (const o of others || []) best = Math.max(best, diceCoefficient(p.finalCode, o.code));
-    sig.maxSimilarityToOthers = Number(best.toFixed(2));
+      .from("submissions").select("code, user_id, verdict, passed, total")
+      .eq("contest_id", contestId).eq("problem_id", p.problemId).eq("kind", "submit")
+      .gte("created_at", contest.starts_at).lte("created_at", contest.ends_at)
+      .limit(1500);
+    const accepted = (others || []).filter((o) => o.verdict === "AC");
+    const mineCounts = shingleCounts(p.finalCode);
+    const pool = accepted.map((o) => ({ o, counts: shingleCounts(o.code) }));
+    const idf = buildIdf([...pool.map((x) => x.counts), mineCounts]);
+    let best = { score: 0, userId: null };
+    for (const { o, counts } of pool) {
+      if (o.user_id === userId) continue;
+      const score = cosineSimilarity(mineCounts, counts, idf);
+      if (score > best.score) best = { score, userId: o.user_id };
+    }
+    sig.maxSimilarityToOthers = Number(best.score.toFixed(2));
+    sig.poolSize = pool.length;
+    sig.tooShort = isTooShort(p.finalCode);
+    if (best.userId && best.score >= 0.5) {
+      const { data: prof } = await supabase.from("profiles").select("name, username").eq("id", best.userId).maybeSingle();
+      sig.mostSimilarTo = prof?.name || prof?.username || null;
+      // identical failing outcomes (same verdict and tests passed) on wrong attempts: a weaker, supporting signal
+      const failure = (x) => `${x.verdict}:${x.passed}/${x.total}`;
+      const mineFail = new Set(subs.filter((x) => x.problem_id === p.problemId && x.verdict !== "AC").map(failure));
+      const theirFail = new Set((others || []).filter((x) => x.user_id === best.userId && x.verdict !== "AC").map(failure));
+      sig.sharedFailureOutcomes = [...mineFail].filter((f) => theirFail.has(f)).length;
+    }
   }
 
   const response = await generateContentWithRetry({ model: "gemini-3.8-flash", contents: reviewPrompt(contest, problems) });

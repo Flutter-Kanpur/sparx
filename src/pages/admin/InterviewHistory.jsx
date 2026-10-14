@@ -152,7 +152,7 @@ export default function InterviewHistory() {
                     </div>
                   )}
                   {similarityState[s.id]?.result && (
-                    <SimilarityResults matches={similarityState[s.id].result.matches} />
+                    <SimilarityResults matches={similarityState[s.id].result.matches} poolSize={similarityState[s.id].result.poolSize} />
                   )}
                 </div>
               ))}
@@ -325,7 +325,7 @@ function SimilarityCheckControl({ state, onCheck }) {
   );
 }
 
-function SimilarityResults({ matches }) {
+function SimilarityResults({ matches, poolSize }) {
   if (!matches || matches.length === 0) {
     return (
       <div className="mt-2 ml-11 text-xs" style={{ color: "var(--text-muted)" }}>
@@ -334,10 +334,17 @@ function SimilarityResults({ matches }) {
     );
   }
   const top = matches.filter((m) => m.score >= 0.3).slice(0, 5);
+  const note = (
+    <div className="text-[11px] mt-1" style={{ color: "var(--text-muted)" }}>
+      Compared on code structure with variable names ignored, across {poolSize ?? "?"} submissions to this problem.
+      {poolSize != null && poolSize < 8 ? " With so few to compare against, treat this as weak evidence." : ""} Similar code is a reason to look, not proof of copying.
+    </div>
+  );
   if (top.length === 0) {
     return (
       <div className="mt-2 ml-11 text-xs" style={{ color: "var(--text-muted)" }}>
         No meaningfully similar submissions found.
+        {note}
       </div>
     );
   }
@@ -347,13 +354,17 @@ function SimilarityResults({ matches }) {
         <div key={m.id} className="text-xs flex items-center gap-2" style={{ color: "var(--text-muted)" }}>
           <span
             className="inline-flex items-center text-[10px] font-semibold px-1.5 py-0.5 rounded"
-            style={{ background: m.score >= 0.7 ? "#fee2e2" : "#fef3c7", color: m.score >= 0.7 ? "#b91c1c" : "#92400e" }}
+            style={m.tooShort
+              ? { background: "#f4f4f5", color: "var(--text-muted)" }
+              : { background: m.score >= 0.7 ? "#fee2e2" : "#fef3c7", color: m.score >= 0.7 ? "#b91c1c" : "#92400e" }}
           >
             {Math.round(m.score * 100)}% similar
           </span>
           <span>{m.candidate_name || "Unnamed candidate"} — {m.room_title}</span>
+          {m.tooShort && <span className="italic">short code — natural overlap, not meaningful</span>}
         </div>
       ))}
+      {note}
     </div>
   );
 }

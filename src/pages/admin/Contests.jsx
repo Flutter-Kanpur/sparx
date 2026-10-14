@@ -427,8 +427,12 @@ function ReviewsPanel({ contest }) {
     if (!f) return [];
     const out = [];
     for (const sig of f.signals || []) {
-      if (sig.maxSimilarityToOthers >= 0.85) out.push({ level: "high", text: `${sig.title}: ${Math.round(sig.maxSimilarityToOthers * 100)}% similar to another participant's accepted code` });
-      else if (sig.maxSimilarityToOthers >= 0.7) out.push({ level: "mid", text: `${sig.title}: ${Math.round(sig.maxSimilarityToOthers * 100)}% similar to another participant's code` });
+      if (sig.tooShort) continue; // tiny solutions are naturally alike — not meaningful evidence
+      const who = sig.mostSimilarTo ? ` (${sig.mostSimilarTo})` : "";
+      const shared = sig.sharedFailureOutcomes ? `, ${sig.sharedFailureOutcomes} identical wrong-attempt outcome${sig.sharedFailureOutcomes === 1 ? "" : "s"}` : "";
+      const small = sig.poolSize != null && sig.poolSize < 8 ? " — small pool, weak evidence" : "";
+      if (sig.maxSimilarityToOthers >= 0.85) out.push({ level: "high", text: `${sig.title}: ${Math.round(sig.maxSimilarityToOthers * 100)}% similar to another participant's accepted code${who}${shared}${small}` });
+      else if (sig.maxSimilarityToOthers >= 0.7) out.push({ level: "mid", text: `${sig.title}: ${Math.round(sig.maxSimilarityToOthers * 100)}% similar to another participant's code${who}${shared}${small}` });
       if (sig.solved && sig.wrongBeforeAccept >= 2 && sig.rewriteSimilarity != null && sig.rewriteSimilarity < 0.4) {
         out.push({ level: "mid", text: `${sig.title}: accepted code is a near-total rewrite after ${sig.wrongBeforeAccept} wrong attempts` });
       }
