@@ -856,11 +856,17 @@ async function buildContestReview(contestId, userId) {
     }
   }
 
-  await supabase.from("contest_reviews").upsert({ contest_id: contestId, user_id: userId, review, model: "gemini-3.8-flash" });
-  await supabase.from("contest_review_flags").upsert({
+  // Saving is checked: a review that is shown but not stored would be regenerated (and re-billed) on every open.
+  const saved = await supabase.from("contest_reviews").upsert({ contest_id: contestId, user_id: userId, review, model: "gemini-3.8-flash" });
+  if (saved.error) {
+    console.warn("[interview-relay] contest review save failed", contestId, userId, saved.error.message);
+    return { status: 500, error: `The review was written but could not be saved (${saved.error.message}). Check that migration 0020 was applied to this Supabase project.` };
+  }
+  const flagSaved = await supabase.from("contest_review_flags").upsert({
     contest_id: contestId, user_id: userId, signals,
     admin_note: typeof parsed.admin_note === "string" ? parsed.admin_note.slice(0, 500) : null,
   });
+  if (flagSaved.error) console.warn("[interview-relay] contest review flags save failed", contestId, userId, flagSaved.error.message);
   return { status: 200, review };
 }
 
@@ -889,7 +895,11 @@ app.post("/api/contests/:contestId/review", async (req, res) => {
     res.json({ review: result.review, cached: false });
   } catch (err) {
     console.warn("[interview-relay] contest review failed", key, err);
-    res.status(502).json({ error: "couldn't generate the review right now — try again in a minute" });
+    const detail = String(err?.message || err).slice(0, 200);
+    const overloaded = isGeminiOverloaded(err) || /429|quota|rate/i.test(detail);
+    res.status(502).json({ error: overloaded
+      ? "The AI service is busy or over its free limit — try again in a minute."
+      : `Couldn't generate the review (${detail}).` });
   }
 });
 
